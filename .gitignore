@@ -15,6 +15,9 @@
 
 # next.js
 /.next/
+/dist/
+/.vinext/
+/.wrangler/
 /out/
 
 # production

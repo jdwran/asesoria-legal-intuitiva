@@ -1,27 +1,28 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   ArrowRight,
-  BookOpen,
   Building2,
   CalendarDays,
   Check,
   ChevronRight,
-  CircleHelp,
   ClipboardCheck,
   Clock3,
+  Cloud,
+  CloudOff,
   Compass,
   Download,
   ExternalLink,
   FileCheck2,
+  Files,
   FileText,
   FolderOpen,
   Info,
   Landmark,
   LoaderCircle,
-  LockKeyhole,
+  LogOut,
   MapPin,
   Menu,
   MoreHorizontal,
@@ -29,15 +30,18 @@ import {
   Pencil,
   Plus,
   Scale,
-  Search,
+  Save,
   ShieldCheck,
   Sparkles,
+  Trash2,
   Upload,
   Users,
+  X,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { LegalEmptyState } from "@/components/legal-empty-state";
 import {
   Dialog,
   DialogContent,
@@ -65,19 +69,220 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
+import { PreliminaryOrientation } from "@/components/preliminary-orientation";
+import {
+  type CaseBlockSuggestion,
+  getCaseOutputs,
+  getColombianProcedureSteps,
+  getSuggestedCaseBlocks,
+} from "@/lib/case-guidance";
+import type { CaseSessionSnapshot } from "@/lib/case-session";
+import { DETAILED_GUIDANCE_ACKNOWLEDGEMENT_VERSION } from "@/lib/detailed-guidance";
+import {
+  formatCaseFileSize,
+  parseStoredCaseFile,
+  type StoredCaseFile,
+} from "@/lib/case-file";
+import {
+  caseFileKey,
+  classifyCaseFile,
+  MAX_CASE_BATCH_SIZE_BYTES,
+  MAX_CASE_FILES_PER_BATCH,
+  MAX_CASE_FILE_SIZE_BYTES,
+  validateCaseFileBatch,
+  type CaseFileRejectionReason,
+} from "@/lib/case-file-classification";
+import {
+  composeDraftExport,
+  DRAFT_EXPORT_OPTIONS,
+  getDraftExportFilename,
+  type DraftExportFormat,
+} from "@/lib/draft-export";
 import {
   CaseElement,
   CaseElementType,
   getOfficialSources,
+  getPreliminaryLegalCitations,
   initialElements,
   initialOrientation,
   LegalOrientation,
   type OfficialSource,
 } from "@/lib/legal-data";
+import {
+  EXTERNAL_PROCESSING_COPY,
+  ORIENTATION_FORM_ERRORS,
+  PROCESSING_CONSENT_COPY,
+  isOrientationFormReady,
+} from "@/lib/orientation-form";
 
-type NavKey = "resumen" | CaseElementType | "ruta";
+type NavKey = "resumen" | "expediente" | "ruta" | "resultados";
+type AnalysisProvider = "demo" | "open" | "openai";
+type AnalysisMode = "ready" | "demo" | "ai";
+type AccountState = "checking" | "anonymous" | "active" | "unavailable";
+type SaveState = "ready" | "saving" | "saved" | "error" | "conflict";
+type SavedAccount = { displayName: string };
+type PendingCaseFile = {
+  id: string;
+  file: File;
+  pieceType: CaseElementType;
+  status: "ready" | "uploading" | "uploaded" | "error";
+  error?: string;
+};
+type OrientationApiResponse = LegalOrientation & {
+  mode?: "demo" | "ai";
+  degraded?: boolean;
+  provider?: AnalysisProvider;
+  fallbackUsed?: boolean;
+};
 
-const demoStory = "Me quieren desalojar del apartamento en cinco días. Me avisaron por WhatsApp y tengo contrato escrito.";
+const ORIENTATION_REQUEST_TIMEOUT_MS = 90_000;
+const SESSION_SAVE_DEBOUNCE_MS = 800;
+const TUTELA_EXPORT_WARNING =
+  "La tutela solo procede si no tienes otro medio de defensa o hay riesgo de un daño grave e inminente. Revisa este borrador con un abogado o un consultorio jurídico gratuito antes de radicarlo.";
+const CASE_FILE_STORAGE_CONSENT =
+  "Autorizo guardar estos archivos cifrados en mi sesión legal. Entiendo que no se enviarán al proveedor de IA y que puedo eliminarlos desde el expediente.";
+
+function AccountSessionStatus({
+  account,
+  saveState,
+  onRetry,
+  onSignOut,
+}: {
+  account: SavedAccount;
+  saveState: SaveState;
+  onRetry: () => void;
+  onSignOut: () => void;
+}) {
+  const statusLabel =
+    saveState === "saving"
+      ? "Guardando…"
+      : saveState === "saved"
+        ? "Guardado"
+        : saveState === "error"
+          ? "No se pudo guardar"
+          : saveState === "conflict"
+            ? "Cambios en otra pestaña"
+            : "Listo para guardar";
+  const StatusIcon = saveState === "error" || saveState === "conflict" ? CloudOff : saveState === "ready" ? Save : Cloud;
+
+  return (
+    <div className="flex min-w-0 items-center gap-2 rounded-full border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-600 shadow-sm">
+      <StatusIcon
+        aria-hidden="true"
+        className={`size-3.5 shrink-0 ${saveState === "error" || saveState === "conflict" ? "text-rose-600" : "text-emerald-600"}`}
+      />
+      <span className="hidden max-w-32 truncate font-semibold text-slate-800 sm:inline" title={account.displayName}>
+        {account.displayName}
+      </span>
+      <span className="sr-only sm:not-sr-only" aria-live="polite">
+        {statusLabel}
+      </span>
+      {saveState === "error" && (
+        <button type="button" onClick={onRetry} className="font-semibold text-[#173f6b] hover:underline">
+          Reintentar
+        </button>
+      )}
+      {saveState === "conflict" && (
+        <button type="button" onClick={() => window.location.reload()} className="font-semibold text-[#173f6b] hover:underline">
+          Recargar
+        </button>
+      )}
+      <a
+        href="/signout-with-chatgpt?return_to=%2F"
+        onClick={onSignOut}
+        className="grid size-6 shrink-0 place-items-center rounded-full text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+        aria-label="Cerrar sesión y retirar el expediente de este dispositivo"
+        title="Cerrar sesión"
+      >
+        <LogOut className="size-3.5" />
+      </a>
+    </div>
+  );
+}
+
+function AccountSessionLoader() {
+  return (
+    <div className="grid min-h-[100dvh] place-items-center bg-[#f4f3ee] px-6 text-[#102238]">
+      <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm" role="status">
+        <LoaderCircle className="size-5 animate-spin text-emerald-600" />
+        <div>
+          <p className="text-sm font-semibold">Restaurando tu sesión</p>
+          <p className="mt-0.5 text-xs text-slate-500">Estamos recuperando tu expediente guardado.</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AccountSessionUnavailable() {
+  return (
+    <div className="grid min-h-[100dvh] place-items-center bg-[#f4f3ee] px-6 text-[#102238]">
+      <div className="max-w-md rounded-2xl border border-amber-200 bg-white p-6 text-center shadow-sm" role="alert">
+        <CloudOff className="mx-auto size-7 text-amber-700" aria-hidden="true" />
+        <h1 className="mt-3 font-serif text-2xl font-semibold">No pudimos restaurar tu sesión</h1>
+        <p className="mt-2 text-sm leading-6 text-slate-600">
+          Para no reemplazar tu expediente guardado con uno vacío, espera un momento e inténtalo de nuevo.
+        </p>
+        <button
+          type="button"
+          onClick={() => window.location.reload()}
+          className="mt-5 min-h-11 rounded-lg bg-[#173f6b] px-4 py-2 text-sm font-bold text-white hover:bg-[#102f51]"
+        >
+          Reintentar
+        </button>
+      </div>
+    </div>
+  );
+}
+
+async function requestOrientation(input: {
+  story: string;
+  city: string;
+  processingConsent: true;
+}): Promise<OrientationApiResponse> {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(
+    () => controller.abort(new DOMException("La solicitud tardó demasiado.", "TimeoutError")),
+    ORIENTATION_REQUEST_TIMEOUT_MS,
+  );
+
+  try {
+    const response = await fetch("/api/orientar", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+      signal: controller.signal,
+    });
+    const responseText = await response.text();
+    let payload: unknown;
+
+    try {
+      payload = responseText ? JSON.parse(responseText) : null;
+    } catch {
+      payload = null;
+    }
+
+    if (!response.ok) {
+      const serverMessage =
+        payload && typeof payload === "object" && "error" in payload && typeof payload.error === "string"
+          ? payload.error
+          : `No fue posible analizar el caso (${response.status}).`;
+      throw new Error(serverMessage);
+    }
+    if (!payload || typeof payload !== "object") {
+      throw new Error("El servidor respondió en un formato inesperado.");
+    }
+
+    return payload as OrientationApiResponse;
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error("El análisis tardó demasiado. Intenta nuevamente en unos minutos.");
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
 
 const navGroups: Array<{
   label: string;
@@ -88,25 +293,13 @@ const navGroups: Array<{
   }>;
 }> = [
   {
-    label: "Tu caso",
+    label: "Tu recorrido",
     items: [
-      { id: "resumen", label: "Vista general", icon: FolderOpen },
-      { id: "hechos", label: "Lo que pasó", icon: ClipboardCheck },
-      { id: "personas", label: "Personas y entidades", icon: Users },
-      { id: "fechas", label: "Fechas clave", icon: CalendarDays },
+      { id: "resumen", label: "Inicio", icon: FolderOpen },
+      { id: "expediente", label: "Completar mi caso", icon: ClipboardCheck },
+      { id: "ruta", label: "Pasos y trámites", icon: Compass },
+      { id: "resultados", label: "Mis resultados", icon: FileCheck2 },
     ],
-  },
-  {
-    label: "Lo que lo respalda",
-    items: [
-      { id: "pruebas", label: "Pruebas", icon: Paperclip },
-      { id: "normas", label: "Fuentes oficiales", icon: BookOpen },
-      { id: "documentos", label: "Documentos", icon: FileText },
-    ],
-  },
-  {
-    label: "Actuar",
-    items: [{ id: "ruta", label: "Ruta recomendada", icon: Compass }],
   },
 ];
 
@@ -118,6 +311,41 @@ const typeLabels: Record<CaseElementType, string> = {
   normas: "Fuente oficial",
   documentos: "Documento",
 };
+
+const uploadTypeLabels: Record<CaseElementType, string> = {
+  ...typeLabels,
+  normas: "Norma o fuente (sin verificar)",
+};
+
+function caseElementTypeLabel(element: CaseElement) {
+  return element.attachment ? uploadTypeLabels[element.type] : typeLabels[element.type];
+}
+
+const caseFileRejectionMessages: Record<CaseFileRejectionReason, string> = {
+  "empty-file": "está vacío",
+  "file-too-large": "supera 10 MB",
+  "unsupported-type": "usa un formato no permitido",
+  "duplicate-file": "ya está en esta selección",
+  "batch-file-limit": "supera el máximo de 20 archivos",
+  "batch-size-limit": "haría que el lote supere 50 MB",
+};
+
+function elementFromStoredCaseFile(file: StoredCaseFile): CaseElement {
+  return {
+    id: `file-${file.id}`,
+    type: file.pieceType,
+    title: file.fileName,
+    detail: `Archivo original almacenado cifrado · ${formatCaseFileSize(file.sizeBytes)}`,
+    status: "listo",
+    attachment: {
+      id: file.id,
+      fileName: file.fileName,
+      mimeType: file.mimeType,
+      sizeBytes: file.sizeBytes,
+      uploadedAt: file.createdAt,
+    },
+  };
+}
 
 const urgencyStyles = {
   baja: "border-sky-200 bg-sky-50 text-sky-800",
@@ -145,8 +373,8 @@ function CaseNavigation({
   onNavigate?: () => void;
 }) {
   const getCount = (id: NavKey) => {
-    if (id === "resumen" || id === "ruta") return null;
-    return elements.filter((element) => element.type === id).length;
+    if (id === "expediente") return elements.length;
+    return null;
   };
 
   return (
@@ -180,7 +408,7 @@ function CaseNavigation({
         </div>
       </div>
 
-      <nav className="flex-1 space-y-6 overflow-y-auto px-3 py-5" aria-label="Piezas del caso">
+      <nav className="flex-1 space-y-6 overflow-y-auto px-3 py-5" aria-label="Recorrido del caso">
         {navGroups.map((group) => (
           <div key={group.label}>
             <p className="mb-2 px-2 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">
@@ -194,6 +422,7 @@ function CaseNavigation({
                 return (
                   <button
                     key={item.id}
+                    aria-current={active ? "page" : undefined}
                     onClick={() => {
                       setActiveSection(item.id);
                       onNavigate?.();
@@ -223,18 +452,16 @@ function CaseNavigation({
           className="h-10 w-full bg-emerald-400 font-semibold text-slate-950 hover:bg-emerald-300"
         >
           <Plus className="size-4" />
-          Agregar al expediente
+          Agregar un bloque
         </Button>
-        <div className="mt-3 flex items-center justify-center gap-1.5 text-[11px] text-slate-500">
-          <LockKeyhole className="size-3" />
-          La app no conserva el expediente al cerrar
-        </div>
       </div>
     </div>
   );
 }
 
-export function LegalWorkspace() {
+export function LegalWorkspace({ identityAvailable = false }: { identityAvailable?: boolean }) {
+  const resultHeadingRef = useRef<HTMLHeadingElement>(null);
+  const triageSectionRef = useRef<HTMLElement>(null);
   const [activeSection, setActiveSection] = useState<NavKey>("resumen");
   const [elements, setElements] = useState<CaseElement[]>(initialElements);
   const [orientation, setOrientation] = useState<LegalOrientation>(initialOrientation);
@@ -243,28 +470,128 @@ export function LegalWorkspace() {
   const [caseMenuOpen, setCaseMenuOpen] = useState(false);
   const [caseDialogMode, setCaseDialogMode] = useState<"new" | "edit">("new");
   const [addOpen, setAddOpen] = useState(false);
+  const [selectedSuggestion, setSelectedSuggestion] = useState<CaseBlockSuggestion | null>(null);
   const [documentOpen, setDocumentOpen] = useState(false);
-  const [story, setStory] = useState(demoStory);
-  const [savedStory, setSavedStory] = useState(demoStory);
-  const [city, setCity] = useState("Bogotá, D. C.");
+  const [draftExportFormat, setDraftExportFormat] = useState<DraftExportFormat>("story");
+  const [story, setStory] = useState("");
+  const [savedStory, setSavedStory] = useState("");
+  const [city, setCity] = useState("");
   const [processingConsent, setProcessingConsent] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isRefining, setIsRefining] = useState(false);
-  const [analysisMode, setAnalysisMode] = useState<"demo" | "ai">("demo");
+  const [analysisMode, setAnalysisMode] = useState<AnalysisMode>("ready");
+  const [analysisProvider, setAnalysisProvider] = useState<AnalysisProvider | null>(null);
+  const [hasAnalyzedCase, setHasAnalyzedCase] = useState(false);
+  const [analysisFallbackUsed, setAnalysisFallbackUsed] = useState(false);
   const [analysisDegraded, setAnalysisDegraded] = useState(false);
-  const [notice, setNotice] = useState("Expediente guardado");
+  const [editingPreliminaryStory, setEditingPreliminaryStory] = useState(false);
+  const [detailedGuidanceAcknowledged, setDetailedGuidanceAcknowledged] = useState(false);
+  const [detailedGuidanceAcceptedAt, setDetailedGuidanceAcceptedAt] = useState<string | null>(null);
+  const [notice, setNotice] = useState("IA lista para organizar tu caso");
   const [formError, setFormError] = useState("");
   const [triageAnswers, setTriageAnswers] = useState<Record<number, string>>({});
   const [triageSaved, setTriageSaved] = useState(false);
   const [triageError, setTriageError] = useState("");
+  const [bulkUploadOpen, setBulkUploadOpen] = useState(false);
+  const [pendingCaseFiles, setPendingCaseFiles] = useState<PendingCaseFile[]>([]);
+  const [caseFileErrors, setCaseFileErrors] = useState<string[]>([]);
+  const [caseFileStorageConsent, setCaseFileStorageConsent] = useState(false);
+  const [isUploadingCaseFiles, setIsUploadingCaseFiles] = useState(false);
+  const [isPurgingCaseFiles, setIsPurgingCaseFiles] = useState(false);
+  const [busyCaseFileIds, setBusyCaseFileIds] = useState<string[]>([]);
+  const [caseFilesSyncAttempt, setCaseFilesSyncAttempt] = useState(0);
   const [newElement, setNewElement] = useState<{
     type: CaseElementType;
     title: string;
     detail: string;
     date: string;
   }>({ type: "pruebas", title: "", detail: "", date: "" });
+  const [accountState, setAccountState] = useState<AccountState>(identityAvailable ? "checking" : "anonymous");
+  const [account, setAccount] = useState<SavedAccount | null>(null);
+  const [saveState, setSaveState] = useState<SaveState>("ready");
+  const saveStateRef = useRef<SaveState>("ready");
+  const accountEnabledRef = useRef(false);
+  const caseFileInputRef = useRef<HTMLInputElement>(null);
+  const caseFilesSyncedRef = useRef(false);
+  const sessionRevisionRef = useRef(0);
+  const saveInFlightRef = useRef(false);
+  const pendingSnapshotRef = useRef<CaseSessionSnapshot | null>(null);
+  const lastPersistedSnapshotRef = useRef<string | null>(null);
 
-  const sources = useMemo(() => getOfficialSources(orientation.sourceIds), [orientation.sourceIds]);
+  const updateSaveState = useCallback((nextState: SaveState) => {
+    saveStateRef.current = nextState;
+    setSaveState(nextState);
+  }, []);
+
+  const resetPrivateWorkspace = useCallback(() => {
+    accountEnabledRef.current = false;
+    sessionRevisionRef.current = 0;
+    saveInFlightRef.current = false;
+    pendingSnapshotRef.current = null;
+    lastPersistedSnapshotRef.current = null;
+    caseFilesSyncedRef.current = false;
+    setAccount(null);
+    setAccountState("anonymous");
+    updateSaveState("ready");
+    setActiveSection("resumen");
+    setElements(initialElements);
+    setOrientation(initialOrientation);
+    setCompletedSteps([0]);
+    setNewCaseOpen(false);
+    setCaseMenuOpen(false);
+    setAddOpen(false);
+    setBulkUploadOpen(false);
+    setPendingCaseFiles([]);
+    setCaseFileErrors([]);
+    setCaseFileStorageConsent(false);
+    setIsUploadingCaseFiles(false);
+    setIsPurgingCaseFiles(false);
+    setBusyCaseFileIds([]);
+    setCaseFilesSyncAttempt(0);
+    setSelectedSuggestion(null);
+    setDocumentOpen(false);
+    setStory("");
+    setSavedStory("");
+    setCity("");
+    setProcessingConsent(false);
+    setIsAnalyzing(false);
+    setIsRefining(false);
+    setAnalysisMode("ready");
+    setAnalysisProvider(null);
+    setHasAnalyzedCase(false);
+    setAnalysisFallbackUsed(false);
+    setAnalysisDegraded(false);
+    setEditingPreliminaryStory(false);
+    setDetailedGuidanceAcknowledged(false);
+    setDetailedGuidanceAcceptedAt(null);
+    setNotice("IA lista para organizar tu caso");
+    setFormError("");
+    setTriageAnswers({});
+    setTriageSaved(false);
+    setTriageError("");
+    setNewElement({ type: "pruebas", title: "", detail: "", date: "" });
+  }, [updateSaveState]);
+
+  const signOut = useCallback(() => {
+    resetPrivateWorkspace();
+  }, [resetPrivateWorkspace]);
+
+  const preliminaryLegalCitations = useMemo(
+    () => getPreliminaryLegalCitations(orientation, savedStory),
+    [orientation, savedStory],
+  );
+  const sources = useMemo(
+    () =>
+      [
+        ...new Map(
+          getOfficialSources([
+            ...orientation.sourceIds,
+            ...preliminaryLegalCitations.map((source) => source.id),
+          ]).map((source) => [source.id, source]),
+        ).values(),
+      ],
+    [orientation.sourceIds, preliminaryLegalCitations],
+  );
   const savedSourceIds = useMemo(
     () => new Set(elements.filter((element) => element.type === "normas" && element.sourceId).map((element) => element.sourceId as string)),
     [elements],
@@ -286,11 +613,344 @@ export function LegalWorkspace() {
     () => elements.filter((element) => element.type === "pruebas").length,
     [elements],
   );
+  const storedFileCount = useMemo(
+    () => elements.filter((element) => element.attachment).length,
+    [elements],
+  );
+  const caseSuggestions = useMemo(
+    () => getSuggestedCaseBlocks(orientation, elements),
+    [elements, orientation],
+  );
+  const procedureSteps = useMemo(
+    () => getColombianProcedureSteps(orientation, city),
+    [city, orientation],
+  );
+  const caseOutputs = useMemo(
+    () => getCaseOutputs(orientation, elements, completedSteps),
+    [completedSteps, elements, orientation],
+  );
+  const nextProcedureIndex = procedureSteps.findIndex((_, index) => !completedSteps.includes(index));
+  const nextProcedure = procedureSteps[nextProcedureIndex === -1 ? procedureSteps.length - 1 : nextProcedureIndex];
+  const needsTriage = !triageSaved && orientation.triageQuestions.length > 0;
+  const caseSessionSnapshot = useMemo<CaseSessionSnapshot>(
+    () => ({
+      schemaVersion: 1,
+      draft: { story, city },
+      case: hasAnalyzedCase
+        ? {
+            savedStory,
+            orientation,
+            elements,
+            completedStepIds: completedSteps.flatMap((index) => {
+              const stepId = procedureSteps[index]?.id;
+              return stepId ? [stepId] : [];
+            }),
+            triageAnswers: Object.fromEntries(
+              Object.entries(triageAnswers).map(([index, answer]) => [String(index), answer]),
+            ),
+            triageSaved,
+            detailedGuidanceAcknowledgement: detailedGuidanceAcceptedAt
+              ? {
+                  acceptedAt: detailedGuidanceAcceptedAt,
+                  version: DETAILED_GUIDANCE_ACKNOWLEDGEMENT_VERSION,
+                }
+              : undefined,
+            analysis: {
+              mode: analysisMode,
+              provider: analysisProvider,
+              fallbackUsed: analysisFallbackUsed,
+              degraded: analysisDegraded,
+            },
+          }
+        : null,
+    }),
+    [
+      analysisDegraded,
+      analysisFallbackUsed,
+      analysisMode,
+      analysisProvider,
+      city,
+      completedSteps,
+      detailedGuidanceAcceptedAt,
+      elements,
+      hasAnalyzedCase,
+      orientation,
+      procedureSteps,
+      savedStory,
+      story,
+      triageAnswers,
+      triageSaved,
+    ],
+  );
 
-  const filteredElements = useMemo(() => {
-    if (activeSection === "resumen" || activeSection === "ruta") return [];
-    return elements.filter((element) => element.type === activeSection);
-  }, [activeSection, elements]);
+  const persistPendingSession = useCallback(
+    async function persistPendingSession() {
+      if (!accountEnabledRef.current || saveInFlightRef.current || !pendingSnapshotRef.current) return;
+
+      saveInFlightRef.current = true;
+      let stopped = false;
+
+      while (accountEnabledRef.current && pendingSnapshotRef.current && !stopped) {
+        const snapshot: CaseSessionSnapshot = pendingSnapshotRef.current;
+        const serializedSnapshot = JSON.stringify(snapshot);
+        pendingSnapshotRef.current = null;
+        updateSaveState("saving");
+
+        try {
+          const response = await fetch("/api/session", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            credentials: "same-origin",
+            body: JSON.stringify({
+              snapshot,
+              expectedRevision: sessionRevisionRef.current,
+            }),
+          });
+
+          if (response.status === 409) {
+            if (!pendingSnapshotRef.current) pendingSnapshotRef.current = snapshot;
+            updateSaveState("conflict");
+            stopped = true;
+            continue;
+          }
+
+          if (response.status === 401 || response.status === 403) {
+            resetPrivateWorkspace();
+            stopped = true;
+            continue;
+          }
+
+          if (!response.ok) throw new Error("save_failed");
+
+          const payload = (await response.json()) as { revision?: unknown };
+          if (typeof payload.revision !== "number" || !Number.isInteger(payload.revision)) {
+            throw new Error("invalid_revision");
+          }
+
+          sessionRevisionRef.current = payload.revision;
+          lastPersistedSnapshotRef.current = serializedSnapshot;
+          updateSaveState("saved");
+        } catch {
+          if (!pendingSnapshotRef.current) pendingSnapshotRef.current = snapshot;
+          updateSaveState("error");
+          stopped = true;
+        }
+      }
+
+      saveInFlightRef.current = false;
+      if (!stopped && accountEnabledRef.current && pendingSnapshotRef.current) {
+        window.queueMicrotask(() => void persistPendingSession());
+      }
+    },
+    [resetPrivateWorkspace, updateSaveState],
+  );
+
+  useEffect(() => {
+    if (!identityAvailable) return;
+
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 12_000);
+    let cancelled = false;
+
+    async function restoreSavedSession() {
+      try {
+        const response = await fetch("/api/session", {
+          cache: "no-store",
+          credentials: "same-origin",
+          signal: controller.signal,
+        });
+
+        if (response.status === 401 || response.status === 403 || response.status === 404) {
+          if (!cancelled) setAccountState("anonymous");
+          return;
+        }
+        if (!response.ok) throw new Error("session_unavailable");
+
+        const payload = (await response.json()) as {
+          account?: { displayName?: unknown };
+          session?: { snapshot?: CaseSessionSnapshot; revision?: unknown } | null;
+        };
+        if (!payload.account || typeof payload.account.displayName !== "string") {
+          throw new Error("invalid_account");
+        }
+        if (cancelled) return;
+
+        const savedSession = payload.session ?? null;
+        if (savedSession) {
+          if (!savedSession.snapshot || typeof savedSession.revision !== "number") {
+            throw new Error("invalid_session");
+          }
+
+          const snapshot = savedSession.snapshot;
+          setStory(snapshot.draft.story);
+          setCity(snapshot.draft.city);
+          setProcessingConsent(false);
+          sessionRevisionRef.current = savedSession.revision;
+          lastPersistedSnapshotRef.current = JSON.stringify(snapshot);
+
+          if (snapshot.case) {
+            const restoredCase = snapshot.case;
+            const restoredProcedureSteps = getColombianProcedureSteps(restoredCase.orientation, snapshot.draft.city);
+            const completedIds = new Set(restoredCase.completedStepIds);
+            const restoredTriageAnswers = Object.entries(restoredCase.triageAnswers).reduce<Record<number, string>>(
+              (answers, [index, answer]) => {
+                const numericIndex = Number(index);
+                if (Number.isInteger(numericIndex) && numericIndex >= 0) answers[numericIndex] = answer;
+                return answers;
+              },
+              {},
+            );
+
+            setSavedStory(restoredCase.savedStory);
+            setOrientation(restoredCase.orientation);
+            setElements(restoredCase.elements);
+            setCompletedSteps(
+              restoredProcedureSteps.flatMap((step, index) => (completedIds.has(step.id) ? [index] : [])),
+            );
+            setTriageAnswers(restoredTriageAnswers);
+            setTriageSaved(restoredCase.triageSaved);
+            setDetailedGuidanceAcceptedAt(
+              restoredCase.detailedGuidanceAcknowledgement?.acceptedAt ?? null,
+            );
+            setDetailedGuidanceAcknowledged(
+              Boolean(restoredCase.detailedGuidanceAcknowledgement),
+            );
+            setEditingPreliminaryStory(false);
+            setAnalysisMode(restoredCase.analysis.mode);
+            setAnalysisProvider(restoredCase.analysis.provider);
+            setAnalysisFallbackUsed(restoredCase.analysis.fallbackUsed);
+            setAnalysisDegraded(restoredCase.analysis.degraded);
+            setHasAnalyzedCase(true);
+            setNotice("Sesión restaurada · tus cambios se guardarán automáticamente");
+          } else {
+            setHasAnalyzedCase(false);
+            setDetailedGuidanceAcceptedAt(null);
+            setDetailedGuidanceAcknowledged(false);
+            setNotice("Borrador restaurado · tus cambios se guardarán automáticamente");
+          }
+        } else {
+          sessionRevisionRef.current = 0;
+          setNotice("Guardado seguro activado");
+        }
+
+        accountEnabledRef.current = true;
+        setAccount({ displayName: payload.account.displayName });
+        updateSaveState(savedSession ? "saved" : "ready");
+        setAccountState("active");
+      } catch {
+        if (!cancelled) setAccountState("unavailable");
+      } finally {
+        window.clearTimeout(timeout);
+      }
+    }
+
+    void restoreSavedSession();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [identityAvailable, updateSaveState]);
+
+  useEffect(() => {
+    if (
+      accountState !== "active" ||
+      !accountEnabledRef.current ||
+      !hasAnalyzedCase ||
+      caseFilesSyncedRef.current
+    ) {
+      return;
+    }
+    caseFilesSyncedRef.current = true;
+    const controller = new AbortController();
+    let retryTimeout: number | undefined;
+
+    async function syncStoredCaseFiles() {
+      try {
+        const response = await fetch("/api/case-files", {
+          cache: "no-store",
+          credentials: "same-origin",
+          signal: controller.signal,
+        });
+        if (!response.ok) throw new Error("case_files_unavailable");
+        const payload = (await response.json()) as { files?: unknown };
+        if (!Array.isArray(payload.files)) throw new Error("invalid_case_files");
+        const storedFiles = payload.files.map(parseStoredCaseFile);
+        setElements((current) => {
+          const currentAttachments = new Map(
+            current.flatMap((element) =>
+              element.attachment ? [[element.attachment.id, element] as const] : [],
+            ),
+          );
+          return [
+            ...current.filter((element) => !element.attachment),
+            ...storedFiles.map((file) => ({
+              ...elementFromStoredCaseFile(file),
+              id: currentAttachments.get(file.id)?.id ?? `file-${file.id}`,
+            })),
+          ];
+        });
+      } catch {
+        if (!controller.signal.aborted) {
+          caseFilesSyncedRef.current = false;
+          if (caseFilesSyncAttempt < 2) {
+            retryTimeout = window.setTimeout(
+              () => setCaseFilesSyncAttempt((attempt) => attempt + 1),
+              2_000,
+            );
+          } else {
+            setNotice("No pudimos sincronizar los documentos guardados · vuelve a intentarlo más tarde");
+          }
+        }
+      }
+    }
+
+    void syncStoredCaseFiles();
+    return () => {
+      controller.abort();
+      if (retryTimeout !== undefined) window.clearTimeout(retryTimeout);
+    };
+  }, [accountState, caseFilesSyncAttempt, hasAnalyzedCase]);
+
+  useEffect(() => {
+    if (accountState !== "active" || !accountEnabledRef.current) return;
+    if (
+      sessionRevisionRef.current === 0 &&
+      lastPersistedSnapshotRef.current === null &&
+      !caseSessionSnapshot.case &&
+      !caseSessionSnapshot.draft.story.trim() &&
+      !caseSessionSnapshot.draft.city.trim()
+    ) {
+      return;
+    }
+
+    const serializedSnapshot = JSON.stringify(caseSessionSnapshot);
+    if (serializedSnapshot === lastPersistedSnapshotRef.current) {
+      if (
+        saveInFlightRef.current ||
+        saveStateRef.current === "error" ||
+        saveStateRef.current === "conflict"
+      ) {
+        pendingSnapshotRef.current = caseSessionSnapshot;
+      } else {
+        pendingSnapshotRef.current = null;
+      }
+      return;
+    }
+
+    pendingSnapshotRef.current = caseSessionSnapshot;
+    if (saveStateRef.current === "error" || saveStateRef.current === "conflict") return;
+    const timeout = window.setTimeout(() => void persistPendingSession(), SESSION_SAVE_DEBOUNCE_MS);
+    return () => window.clearTimeout(timeout);
+  }, [accountState, caseSessionSnapshot, persistPendingSession]);
+
+  useEffect(() => {
+    if (!hasAnalyzedCase) return;
+    const frame = window.requestAnimationFrame(() => {
+      resultHeadingRef.current?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [hasAnalyzedCase]);
 
   const completeness = useMemo(() => {
     const covered = new Set(elements.map((element) => element.type)).size;
@@ -348,10 +1008,13 @@ LO QUE SE HA INFORMADO
 ${orientation.extractedFacts.map((fact, index) => `${index + 1}. ${fact}`).join("\n")}
 
 PIEZAS DEL EXPEDIENTE
-${elements.map((element, index) => `${index + 1}. [${typeLabels[element.type]}] ${element.title}: ${element.detail}${element.sourceUrl ? `\n   Fuente: ${element.sourceUrl}` : ""}`).join("\n") || "Aún no se han agregado piezas."}
+${elements.map((element, index) => `${index + 1}. [${caseElementTypeLabel(element)}] ${element.title}: ${element.detail}${element.sourceUrl ? `\n   Fuente: ${element.sourceUrl}` : ""}`).join("\n") || "Aún no se han agregado piezas."}
 
 PREGUNTAS PARA QUIEN REVISE EL CASO
 ${orientation.triageQuestions.map((question, index) => `${index + 1}. ${question}`).join("\n") || "No se registraron preguntas pendientes."}
+
+RUTA DE TRÁMITES SUGERIDA
+${procedureSteps.map((step, index) => `${index + 1}. ${step.title}\n   Entidad: ${step.entity}\n   Canal: ${step.channel}\n   Qué obtener: ${step.expectedOutput}\n   Después: ${step.nextAction}`).join("\n")}
 
 FUENTES SUGERIDAS PARA VERIFICAR
 ${allRelevantSources.map((source) => `- ${source.title}: ${source.url}`).join("\n")}
@@ -384,6 +1047,9 @@ ${elements
   .map((element, index) => `${index + 1}. ${element.title}`)
   .join("\n")}
 
+RUTA DE TRÁMITES SUGERIDA
+${procedureSteps.map((step, index) => `${index + 1}. ${step.title}\n   Entidad: ${step.entity}\n   Canal: ${step.channel}\n   Qué reunir: ${step.requirements.join("; ")}\n   Qué obtener: ${step.expectedOutput}\n   Después: ${step.nextAction}`).join("\n")}
+
 Notificaciones: [CORREO / DIRECCIÓN]
 
 Atentamente,
@@ -393,7 +1059,7 @@ FUENTES SUGERIDAS PARA VERIFICAR
 ${allRelevantSources.map((source) => `- ${source.title}: ${source.url}`).join("\n")}
 
 Este es un borrador informativo. Revisa los datos y, si es posible, solicita orientación jurídica antes de radicarlo.`;
-  }, [allRelevantSources, city, elements, orientation]);
+  }, [allRelevantSources, city, elements, orientation, procedureSteps]);
 
   const draftFilename = useMemo(() => {
     const slug = orientation.recommendedDocument
@@ -405,45 +1071,87 @@ Este es un borrador informativo. Revisa los datos y, si es posible, solicita ori
     return `borrador-${slug || "orientacion-legal"}.txt`;
   }, [orientation.recommendedDocument]);
 
+  const exportDate = useMemo(
+    () =>
+      new Intl.DateTimeFormat("es-CO", {
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+        timeZone: "America/Bogota",
+      }).format(new Date()),
+    [],
+  );
+
+  const exportedDraftText = useMemo(
+    () =>
+      composeDraftExport(draftExportFormat, {
+        draftText,
+        orientation,
+        city,
+        date: exportDate,
+        evidenceNames: elements
+          .filter((element) => element.type === "pruebas")
+          .map((element) => `${element.title}${element.detail ? ` — ${element.detail}` : ""}`),
+      }),
+    [city, draftExportFormat, draftText, elements, exportDate, orientation],
+  );
+
+  const exportedDraftFilename =
+    draftExportFormat === "story" ? draftFilename : getDraftExportFilename(draftExportFormat);
+
   function openCaseDialog(mode: "new" | "edit") {
     setCaseDialogMode(mode);
     setStory(mode === "new" ? "" : savedStory);
+    if (mode === "new") setDraftExportFormat("story");
     setProcessingConsent(false);
     setFormError("");
     setNewCaseOpen(true);
   }
 
-  async function analyzeCase() {
-    const cleanStory = story.trim();
+  async function analyzeCase(storyOverride?: string) {
+    const cleanStory = (storyOverride ?? story).trim();
     const cleanCity = city.trim();
     if (cleanStory.length < 12) {
-      setFormError("Cuéntanos un poco más: el relato debe tener al menos 12 caracteres.");
+      setFormError(ORIENTATION_FORM_ERRORS.story);
       return;
     }
     if (cleanCity.length < 2) {
-      setFormError("Escribe un municipio o ciudad para orientar los canales de consulta.");
+      setFormError(ORIENTATION_FORM_ERRORS.city);
       return;
     }
     if (!processingConsent) {
-      setFormError("Necesitamos tu autorización para procesar el relato.");
+      setFormError(ORIENTATION_FORM_ERRORS.consent);
       return;
     }
+    if (
+      caseDialogMode === "new" &&
+      accountState === "active" &&
+      hasAnalyzedCase &&
+      !window.confirm(
+        "Crear un caso nuevo eliminará de forma permanente los documentos originales guardados del caso actual, si existen. ¿Quieres continuar?",
+      )
+    ) {
+      return;
+    }
+    setStory(cleanStory);
     setFormError("");
     setIsAnalyzing(true);
     setNotice("Organizando tu relato…");
 
     try {
-      const response = await fetch("/api/orientar", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ story: cleanStory, city: cleanCity, processingConsent }),
-      });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error ?? "No fue posible analizar el caso");
-      const result = payload as LegalOrientation & { mode?: "demo" | "ai"; degraded?: boolean };
+      const result = await requestOrientation({ story: cleanStory, city: cleanCity, processingConsent: true });
+      if (caseDialogMode === "new" && accountState === "active") {
+        await purgeStoredCaseFiles(false);
+      }
       setOrientation(result);
       setSavedStory(cleanStory);
+      setHasAnalyzedCase(true);
+      setEditingPreliminaryStory(false);
+      setDetailedGuidanceAcknowledged(false);
+      setDetailedGuidanceAcceptedAt(null);
       setAnalysisMode(result.mode === "ai" ? "ai" : "demo");
+      setAnalysisProvider(result.provider ?? (result.mode === "ai" ? "openai" : "demo"));
+      setAnalysisFallbackUsed(Boolean(result.fallbackUsed));
       setAnalysisDegraded(Boolean(result.degraded));
       const detectedFacts = result.extractedFacts.map((fact, index) => ({
           id: `fact-${Date.now()}-${index}`,
@@ -472,7 +1180,15 @@ Este es un borrador informativo. Revisa los datos y, si es posible, solicita ori
       setCompletedSteps([]);
       setActiveSection("resumen");
       setNewCaseOpen(false);
-      setNotice(result.degraded ? "IA no disponible · se mostró una ruta de demostración" : "Caso organizado · revisa lo que entendimos");
+      setNotice(
+        result.degraded
+          ? "IA no disponible · se mostró una respuesta preliminar de demostración"
+          : result.provider === "open"
+            ? "Respuesta preliminar lista con un modelo abierto"
+            : result.fallbackUsed
+              ? "El modelo abierto no respondió · respuesta preliminar lista con OpenAI"
+              : "Respuesta preliminar lista con OpenAI",
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : "No pudimos analizar el caso.";
       setFormError(message);
@@ -510,24 +1226,28 @@ Este es un borrador informativo. Revisa los datos y, si es posible, solicita ori
       const enrichedStory = `${savedStory}\n\nInformación adicional confirmada:\n${confirmed
         .map((item) => `- ${item.question} ${item.answer}`)
         .join("\n")}`;
-      const response = await fetch("/api/orientar", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ story: enrichedStory, city: city.trim(), processingConsent: true }),
-      });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error ?? "No fue posible actualizar la ruta");
-      const result = payload as LegalOrientation & { mode?: "demo" | "ai"; degraded?: boolean };
+      const result = await requestOrientation({ story: enrichedStory, city: city.trim(), processingConsent: true });
       setOrientation(result);
       setAnalysisMode(result.mode === "ai" ? "ai" : "demo");
+      setAnalysisProvider(result.provider ?? (result.mode === "ai" ? "openai" : "demo"));
+      setAnalysisFallbackUsed(Boolean(result.fallbackUsed));
       setAnalysisDegraded(Boolean(result.degraded));
       setCompletedSteps([]);
       setElements((current) => [...current, ...answerElements]);
       setTriageSaved(true);
       setTriageError("");
-      setNotice(result.degraded ? "Respuestas guardadas · la ruta mostrada es solo demostrativa" : "Ruta actualizada con tus respuestas");
-    } catch {
-      setTriageError("No se guardaron las respuestas ni se actualizó la ruta. Intenta de nuevo.");
+      setNotice(
+        result.degraded
+          ? "Respuestas guardadas · la ruta mostrada es solo demostrativa"
+          : result.provider === "open"
+            ? "Ruta actualizada con el modelo abierto"
+            : result.fallbackUsed
+              ? "Modelo abierto no disponible · ruta actualizada con OpenAI"
+              : "Ruta actualizada con OpenAI",
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Intenta de nuevo.";
+      setTriageError(`No se guardaron las respuestas ni se actualizó la ruta. ${message}`);
       setNotice("No se guardaron las respuestas; intenta de nuevo");
     } finally {
       setIsRefining(false);
@@ -545,10 +1265,339 @@ Este es un borrador informativo. Revisa los datos y, si es posible, solicita ori
       status: "pendiente",
     };
     setElements((current) => [...current, item]);
-    setActiveSection(newElement.type);
+    setActiveSection("expediente");
     setNewElement({ type: "pruebas", title: "", detail: "", date: "" });
+    setSelectedSuggestion(null);
     setAddOpen(false);
     setNotice(`${typeLabels[item.type]} agregado al expediente`);
+  }
+
+  function openSuggestedBlock(suggestion: CaseBlockSuggestion) {
+    setSelectedSuggestion(suggestion);
+    setNewElement({
+      type: suggestion.type,
+      title: suggestion.title,
+      detail: "",
+      date: "",
+    });
+    setAddOpen(true);
+  }
+
+  function openCustomBlock() {
+    setSelectedSuggestion(null);
+    setNewElement({ type: "pruebas", title: "", detail: "", date: "" });
+    setAddOpen(true);
+  }
+
+  function openBulkCaseFileUpload() {
+    setPendingCaseFiles([]);
+    setCaseFileErrors([]);
+    setCaseFileStorageConsent(false);
+    setBulkUploadOpen(true);
+  }
+
+  function selectCaseFiles(event: React.ChangeEvent<HTMLInputElement>) {
+    const selectedFiles = Array.from(event.target.files ?? []);
+    if (selectedFiles.length === 0) return;
+    const currentByKey = new Map(pendingCaseFiles.map((item) => [caseFileKey(item.file), item]));
+    const validation = validateCaseFileBatch([
+      ...pendingCaseFiles.map((item) => item.file),
+      ...selectedFiles,
+    ]);
+
+    setPendingCaseFiles(
+      validation.accepted.map((file) => {
+        const current = currentByKey.get(caseFileKey(file));
+        return current ?? {
+          id: crypto.randomUUID(),
+          file,
+          pieceType: classifyCaseFile(file),
+          status: "ready",
+        };
+      }),
+    );
+    setCaseFileErrors(
+      validation.rejected.map(
+        ({ file, reason }) => `${file.name}: ${caseFileRejectionMessages[reason]}.`,
+      ),
+    );
+    event.target.value = "";
+  }
+
+  function removePendingCaseFile(id: string) {
+    setPendingCaseFiles((current) => current.filter((item) => item.id !== id));
+    setCaseFileErrors([]);
+  }
+
+  function classifyPendingCaseFile(id: string, pieceType: CaseElementType) {
+    setPendingCaseFiles((current) =>
+      current.map((item) =>
+        item.id === id ? { ...item, pieceType, status: "ready", error: undefined } : item,
+      ),
+    );
+    setCaseFileErrors([]);
+  }
+
+  async function uploadPendingCaseFiles() {
+    if (accountState !== "active") {
+      setCaseFileErrors(["La carga de originales requiere una cuenta con guardado cifrado activo."]);
+      return;
+    }
+    if (!caseFileStorageConsent) {
+      setCaseFileErrors(["Autoriza el almacenamiento cifrado antes de continuar."]);
+      return;
+    }
+    if (pendingCaseFiles.length === 0 || isUploadingCaseFiles) return;
+
+    setIsUploadingCaseFiles(true);
+    setCaseFileErrors([]);
+    const queue = [...pendingCaseFiles];
+    const uploaded: StoredCaseFile[] = [];
+    const failures: string[] = [];
+    let cursor = 0;
+
+    async function worker() {
+      while (cursor < queue.length) {
+        const item = queue[cursor++];
+        setPendingCaseFiles((current) =>
+          current.map((candidate) =>
+            candidate.id === item.id
+              ? { ...candidate, status: "uploading", error: undefined }
+              : candidate,
+          ),
+        );
+        try {
+          const formData = new FormData();
+          formData.append("file", item.file, item.file.name);
+          formData.append("pieceType", item.pieceType);
+          formData.append("lastModified", String(item.file.lastModified));
+          formData.append("storageConsent", "true");
+          const response = await fetch("/api/case-files", {
+            method: "POST",
+            credentials: "same-origin",
+            body: formData,
+          });
+          const payload = (await response.json().catch(() => null)) as
+            | { file?: unknown; error?: unknown }
+            | null;
+          if (!response.ok) {
+            throw new Error(
+              typeof payload?.error === "string" ? payload.error : "No fue posible cargar el archivo.",
+            );
+          }
+          uploaded.push(parseStoredCaseFile(payload?.file));
+          setPendingCaseFiles((current) =>
+            current.map((candidate) =>
+              candidate.id === item.id ? { ...candidate, status: "uploaded" } : candidate,
+            ),
+          );
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "No fue posible cargar el archivo.";
+          failures.push(`${item.file.name}: ${message}`);
+          setPendingCaseFiles((current) =>
+            current.map((candidate) =>
+              candidate.id === item.id
+                ? { ...candidate, status: "error", error: message }
+                : candidate,
+            ),
+          );
+        }
+      }
+    }
+
+    await Promise.all(Array.from({ length: Math.min(3, queue.length) }, () => worker()));
+
+    if (uploaded.length > 0) {
+      const uploadedIds = new Set(uploaded.map((file) => file.id));
+      setElements((current) => [
+        ...current.filter((element) => !element.attachment || !uploadedIds.has(element.attachment.id)),
+        ...uploaded.map(elementFromStoredCaseFile),
+      ]);
+      setPendingCaseFiles((current) =>
+        current.filter((item) =>
+          !uploaded.some(
+            (file) =>
+              file.fileName === item.file.name &&
+              file.sizeBytes === item.file.size &&
+              file.lastModified === item.file.lastModified,
+          ),
+        ),
+      );
+      setActiveSection("expediente");
+    }
+    setCaseFileErrors(failures);
+    setIsUploadingCaseFiles(false);
+
+    if (failures.length === 0) {
+      setPendingCaseFiles([]);
+      setCaseFileStorageConsent(false);
+      setBulkUploadOpen(false);
+      setNotice(
+        `${uploaded.length} ${uploaded.length === 1 ? "documento cargado y clasificado" : "documentos cargados y clasificados"}`,
+      );
+    } else {
+      setNotice(
+        `${uploaded.length} ${uploaded.length === 1 ? "documento cargado" : "documentos cargados"} · revisa los que fallaron`,
+      );
+    }
+  }
+
+  async function downloadStoredCaseFile(element: CaseElement) {
+    const attachment = element.attachment;
+    const fileId = attachment?.id;
+    if (!fileId || busyCaseFileIds.includes(fileId)) return;
+    setBusyCaseFileIds((current) => [...current, fileId]);
+    try {
+      const response = await fetch(`/api/case-files/${encodeURIComponent(fileId)}/download`, {
+        cache: "no-store",
+        credentials: "same-origin",
+      });
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as { error?: unknown } | null;
+        throw new Error(
+          typeof payload?.error === "string" ? payload.error : "No fue posible descargar el documento.",
+        );
+      }
+      const href = URL.createObjectURL(await response.blob());
+      const anchor = document.createElement("a");
+      anchor.href = href;
+      anchor.download = attachment.fileName;
+      anchor.click();
+      URL.revokeObjectURL(href);
+      setNotice(`${attachment.fileName} descargado`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "No fue posible descargar el documento");
+    } finally {
+      setBusyCaseFileIds((current) => current.filter((id) => id !== fileId));
+    }
+  }
+
+  async function reclassifyStoredCaseFile(element: CaseElement, pieceType: CaseElementType) {
+    const fileId = element.attachment?.id;
+    if (!fileId || pieceType === element.type || busyCaseFileIds.includes(fileId)) return;
+    setBusyCaseFileIds((current) => [...current, fileId]);
+    try {
+      const response = await fetch(`/api/case-files/${encodeURIComponent(fileId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ pieceType }),
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | { file?: unknown; error?: unknown }
+        | null;
+      if (!response.ok) {
+        throw new Error(
+          typeof payload?.error === "string" ? payload.error : "No fue posible reclasificar.",
+        );
+      }
+      const stored = parseStoredCaseFile(payload?.file);
+      setElements((current) =>
+        current.map((candidate) =>
+          candidate.attachment?.id === fileId
+            ? { ...elementFromStoredCaseFile(stored), id: candidate.id }
+            : candidate,
+        ),
+      );
+      setNotice(`${stored.fileName} ahora está en ${typeLabels[stored.pieceType].toLowerCase()}`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "No fue posible reclasificar el documento");
+    } finally {
+      setBusyCaseFileIds((current) => current.filter((id) => id !== fileId));
+    }
+  }
+
+  async function deleteStoredCaseFile(element: CaseElement) {
+    const attachment = element.attachment;
+    const fileId = attachment?.id;
+    if (!fileId || busyCaseFileIds.includes(fileId)) return;
+    if (!window.confirm(`¿Eliminar de forma permanente “${attachment.fileName}”?`)) return;
+    setBusyCaseFileIds((current) => [...current, fileId]);
+    try {
+      const response = await fetch(`/api/case-files/${encodeURIComponent(fileId)}`, {
+        method: "DELETE",
+        credentials: "same-origin",
+      });
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as { error?: unknown } | null;
+        throw new Error(
+          typeof payload?.error === "string" ? payload.error : "No fue posible eliminar el documento.",
+        );
+      }
+      setElements((current) => current.filter((candidate) => candidate.attachment?.id !== fileId));
+      setNotice("Documento eliminado de forma permanente");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "No fue posible eliminar el documento");
+    } finally {
+      setBusyCaseFileIds((current) => current.filter((id) => id !== fileId));
+    }
+  }
+
+  async function purgeStoredCaseFiles(confirmDeletion: boolean) {
+    if (accountState !== "active") return true;
+    if (isPurgingCaseFiles) return false;
+    if (
+      confirmDeletion &&
+      !window.confirm("¿Eliminar de forma permanente todos los documentos originales de este expediente?")
+    ) {
+      return false;
+    }
+    setIsPurgingCaseFiles(true);
+    try {
+      const response = await fetch("/api/case-files", {
+        method: "DELETE",
+        credentials: "same-origin",
+      });
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as { error?: unknown } | null;
+        throw new Error(
+          typeof payload?.error === "string"
+            ? payload.error
+            : "No fue posible eliminar los documentos guardados.",
+        );
+      }
+      setElements((current) => current.filter((element) => !element.attachment));
+      caseFilesSyncedRef.current = true;
+      return true;
+    } finally {
+      setIsPurgingCaseFiles(false);
+    }
+  }
+
+  function goToNextAction() {
+    if (needsTriage) {
+      triageSectionRef.current?.focus({ preventScroll: true });
+      triageSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
+    }
+    setActiveSection("ruta");
+  }
+
+  function continueToDetailedGuidance() {
+    if (!detailedGuidanceAcknowledged) return;
+
+    setDetailedGuidanceAcceptedAt(new Date().toISOString());
+    setActiveSection("resumen");
+    setNotice("Aceptación registrada · análisis detallado habilitado");
+
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        const target = needsTriage ? triageSectionRef.current : resultHeadingRef.current;
+        target?.focus({ preventScroll: true });
+        target?.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    });
+  }
+
+  function editPreliminaryStory() {
+    setStory(savedStory);
+    setProcessingConsent(false);
+    setHasAnalyzedCase(false);
+    setDetailedGuidanceAcknowledged(false);
+    setDetailedGuidanceAcceptedAt(null);
+    setEditingPreliminaryStory(true);
+    setFormError("");
+    setNotice("Edita el relato y vuelve a solicitar una respuesta preliminar");
   }
 
   function toggleStep(index: number) {
@@ -607,10 +1656,10 @@ LO QUE ENTENDIMOS
 ${orientation.plainSummary}
 
 PIEZAS DEL EXPEDIENTE
-${elements.map((element, index) => `${index + 1}. [${typeLabels[element.type]}] ${element.title}\n   ${element.detail}${element.sourceUrl ? `\n   Fuente: ${element.sourceUrl}` : ""}`).join("\n")}
+${elements.map((element, index) => `${index + 1}. [${caseElementTypeLabel(element)}] ${element.title}\n   ${element.detail}${element.sourceUrl ? `\n   Fuente: ${element.sourceUrl}` : ""}`).join("\n")}
 
 RUTA SUGERIDA
-${orientation.nextSteps.map((step, index) => `${index + 1}. ${step.title}: ${step.detail}`).join("\n")}
+${procedureSteps.map((step, index) => `${index + 1}. ${step.title}\n   ${step.detail}\n   Entidad: ${step.entity}\n   Canal: ${step.channel}\n   Requisitos: ${step.requirements.join("; ")}\n   Resultado esperado: ${step.expectedOutput}\n   Siguiente: ${step.nextAction}`).join("\n")}
 
 FUENTES OFICIALES SUGERIDAS PARA VERIFICAR
 ${allRelevantSources.map((source) => `- ${source.title}: ${source.url}`).join("\n")}
@@ -622,9 +1671,64 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
 
   const sectionTitle =
     navGroups.flatMap((group) => group.items).find((item) => item.id === activeSection)?.label ?? "Vista general";
+  const accountIndicator =
+    accountState === "active" && account ? (
+      <AccountSessionStatus
+        account={account}
+        saveState={saveState}
+        onRetry={() => void persistPendingSession()}
+        onSignOut={signOut}
+      />
+    ) : null;
+
+  if (accountState === "checking") return <AccountSessionLoader />;
+  if (accountState === "unavailable") return <AccountSessionUnavailable />;
+
+  if (!hasAnalyzedCase || editingPreliminaryStory) {
+    return (
+      <LegalEmptyState
+        accountIndicator={accountIndicator}
+        story={story}
+        city={city}
+        processingConsent={processingConsent}
+        isAnalyzing={isAnalyzing}
+        formError={formError}
+        onStoryChange={(nextStory) => {
+          setStory(nextStory);
+          setFormError("");
+        }}
+        onCityChange={(nextCity) => {
+          setCity(nextCity);
+          setFormError("");
+        }}
+        onConsentChange={(nextProcessingConsent) => {
+          setProcessingConsent(nextProcessingConsent);
+          setFormError("");
+        }}
+        onSubmit={analyzeCase}
+      />
+    );
+  }
+
+  if (!detailedGuidanceAcceptedAt) {
+    return (
+      <PreliminaryOrientation
+        accountIndicator={accountIndicator}
+        orientation={orientation}
+        city={city}
+        citations={preliminaryLegalCitations}
+        analysisMode={analysisMode}
+        analysisDegraded={analysisDegraded}
+        acknowledged={detailedGuidanceAcknowledged}
+        onAcknowledgedChange={setDetailedGuidanceAcknowledged}
+        onContinue={continueToDetailedGuidance}
+        onEditStory={editPreliminaryStory}
+      />
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-[#f4f3ee] text-slate-950">
+    <div className="min-h-[100dvh] bg-[#f4f3ee] text-slate-950">
       <div className="sr-only" role="status" aria-live="polite">{notice}</div>
       <header className="sticky top-0 z-40 flex h-16 items-center border-b border-slate-200/90 bg-[#fbfaf7]/95 px-4 backdrop-blur md:px-6">
         <div className="flex min-w-0 flex-1 items-center gap-3">
@@ -646,7 +1750,7 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
                   elements={elements}
                   onAdd={() => {
                     setCaseMenuOpen(false);
-                    setAddOpen(true);
+                    openCustomBlock();
                   }}
                   caseTitle={orientation.caseTitle}
                   city={city}
@@ -679,32 +1783,26 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
         </div>
 
         <div className="flex items-center gap-2">
+          {accountIndicator}
           <span className="hidden items-center gap-1.5 text-xs text-slate-500 xl:flex" role="status" aria-live="polite">
             <Check className="size-3.5 text-emerald-600" />
             {notice}
           </span>
-          <Button variant="ghost" size="icon" className="hidden sm:inline-flex" aria-label="Buscar en el expediente (próximamente)" title="Búsqueda disponible en el siguiente corte" disabled>
-            <Search className="size-4" />
-          </Button>
-          <Button variant="ghost" size="icon" className="hidden sm:inline-flex" aria-label="Ayuda (próximamente)" title="Centro de ayuda disponible en el siguiente corte" disabled>
-            <CircleHelp className="size-4" />
-          </Button>
           <Button onClick={() => openCaseDialog("new")} className="bg-[#173f6b] text-white hover:bg-[#102f51]">
             <Pencil className="size-4" />
-            <span className="hidden sm:inline">Reemplazar caso</span>
-            <span className="sm:hidden">Reemplazar</span>
+            <span className="hidden sm:inline">Nuevo caso</span>
+            <span className="sm:hidden">Nuevo</span>
           </Button>
-          <div className="ml-1 grid size-8 place-items-center rounded-full bg-amber-100 text-xs font-bold text-amber-900">LM</div>
         </div>
       </header>
 
-      <div className="grid min-h-[calc(100vh-4rem)] lg:grid-cols-[270px_minmax(0,1fr)] 2xl:grid-cols-[270px_minmax(560px,1fr)_360px]">
-        <aside className="sticky top-16 hidden h-[calc(100vh-4rem)] bg-[#102238] lg:block">
+      <div className="grid min-h-[calc(100dvh-4rem)] lg:grid-cols-[260px_minmax(0,1fr)]">
+        <aside className="sticky top-16 hidden h-[calc(100dvh-4rem)] bg-[#102238] lg:block">
           <CaseNavigation
             activeSection={activeSection}
             setActiveSection={setActiveSection}
             elements={elements}
-            onAdd={() => setAddOpen(true)}
+            onAdd={openCustomBlock}
             caseTitle={orientation.caseTitle}
             city={city}
             completeness={completeness}
@@ -712,7 +1810,7 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
         </aside>
 
         <main className="min-w-0 px-4 py-6 sm:px-6 xl:px-8 xl:py-8">
-          <div className="mx-auto max-w-4xl">
+          <div className="mx-auto max-w-5xl">
             <div className="mb-6 flex items-start justify-between gap-4">
               <div>
                 <div className="mb-2 flex items-center gap-2 text-xs font-medium text-slate-500">
@@ -720,7 +1818,11 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
                   <ChevronRight className="size-3" />
                   <span className="text-slate-800">{sectionTitle}</span>
                 </div>
-                <h1 className="font-serif text-3xl font-semibold tracking-[-0.025em] text-[#102238] sm:text-[2.2rem]">
+                <h1
+                  ref={resultHeadingRef}
+                  tabIndex={-1}
+                  className="font-serif text-3xl font-semibold tracking-[-0.025em] text-[#102238] outline-none sm:text-[2.2rem]"
+                >
                   {activeSection === "resumen" ? orientation.caseTitle : sectionTitle}
                 </h1>
                 {activeSection === "resumen" && (
@@ -733,7 +1835,15 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
                     </span>
                     <span className="flex items-center gap-1.5">
                       <Sparkles className="size-3.5 text-violet-500" />
-                      {analysisMode === "ai" ? "Organizado con IA" : "Modo demostración"}
+                      {analysisMode === "ready"
+                        ? "Listo para analizar con IA"
+                        : analysisMode === "demo"
+                          ? "Modo demostración"
+                        : analysisProvider === "open"
+                          ? "Organizado con IA abierta"
+                          : analysisFallbackUsed
+                            ? "OpenAI · respaldo"
+                            : "Organizado con OpenAI"}
                     </span>
                   </div>
                 )}
@@ -772,39 +1882,44 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
 
             {activeSection === "resumen" && (
               <div className="space-y-6">
-                <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
-                  <div className="flex items-start gap-4 border-b border-slate-100 px-5 py-5 sm:px-6">
-                    <div className="mt-0.5 grid size-9 shrink-0 place-items-center rounded-lg bg-emerald-50 text-emerald-700">
-                      <ClipboardCheck className="size-[18px]" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <h2 className="font-semibold text-slate-900">Esto fue lo que entendimos</h2>
-                        <Button variant="ghost" size="sm" onClick={() => openCaseDialog("edit")} className="h-7 text-xs text-slate-500">
-                          <Pencil className="size-3" /> Editar
-                        </Button>
+                <section className="overflow-hidden rounded-2xl bg-[#102238] text-white shadow-lg shadow-slate-900/10">
+                  <div className="grid gap-5 px-5 py-6 sm:px-7 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+                    <div className="flex items-start gap-4">
+                      <div className="grid size-10 shrink-0 place-items-center rounded-xl bg-emerald-400 text-slate-950">
+                        {needsTriage ? <Info className="size-5" /> : <ArrowRight className="size-5" />}
                       </div>
-                      <p className="mt-2 text-[15px] leading-7 text-slate-600">{orientation.plainSummary}</p>
+                      <div>
+                        <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-emerald-300">
+                          Haz esto ahora
+                        </p>
+                        <h2 className="mt-2 font-serif text-2xl font-semibold">
+                          {needsTriage ? "Confirma los datos que cambian tu ruta" : nextProcedure?.title}
+                        </h2>
+                        <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">
+                          {needsTriage
+                            ? "Son máximo dos respuestas. Se guardan como hechos del expediente y afinan los trámites sugeridos."
+                            : nextProcedure?.detail}
+                        </p>
+                        {!needsTriage && nextProcedure && (
+                          <p className="mt-3 text-xs font-medium text-emerald-200">
+                            Resultado esperado: {nextProcedure.expectedOutput}
+                          </p>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                  <div className="grid gap-px bg-slate-100 sm:grid-cols-3">
-                    <div className="bg-white px-5 py-4">
-                      <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">Tipo de caso</p>
-                      <p className="mt-1.5 text-sm font-semibold capitalize text-slate-800">{orientation.category}</p>
-                    </div>
-                    <div className="bg-white px-5 py-4">
-                      <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">Piezas reunidas</p>
-                      <p className="mt-1.5 text-sm font-semibold text-slate-800">{elements.length} en el expediente</p>
-                    </div>
-                    <div className="bg-white px-5 py-4">
-                      <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">Próxima acción</p>
-                      <p className="mt-1.5 text-sm font-semibold text-[#173f6b]">{orientation.nextSteps[1]?.title ?? orientation.nextSteps[0]?.title}</p>
-                    </div>
+                    <Button onClick={goToNextAction} className="shrink-0 bg-white text-[#102238] hover:bg-slate-100">
+                      {needsTriage ? "Responder ahora" : "Ver paso y requisitos"}
+                      <ArrowRight className="size-4" />
+                    </Button>
                   </div>
                 </section>
 
                 {!triageSaved && orientation.triageQuestions.length > 0 && (
-                  <section className="rounded-2xl border border-amber-200 bg-[#fffaf0] p-5 sm:p-6">
+                  <section
+                    ref={triageSectionRef}
+                    tabIndex={-1}
+                    className="scroll-mt-24 rounded-2xl border border-amber-200 bg-[#fffaf0] p-5 outline-none sm:p-6"
+                  >
                     <div className="flex items-start gap-3">
                       <div className="grid size-8 shrink-0 place-items-center rounded-lg bg-amber-100 text-amber-700">
                         <Info className="size-4" />
@@ -812,8 +1927,8 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <div>
-                            <p className="font-semibold text-amber-950">Dos datos para afinar tu ruta</p>
-                            <p className="mt-1 text-sm text-amber-800/80">No son preguntas de chat: quedarán dentro del expediente.</p>
+                            <p className="font-semibold text-amber-950">Confirma solo lo necesario</p>
+                            <p className="mt-1 text-sm text-amber-800/80">Tus respuestas quedarán como bloques confirmados del expediente.</p>
                           </div>
                           <Badge className="rounded-md bg-amber-100 text-amber-800">Por confirmar</Badge>
                         </div>
@@ -852,67 +1967,75 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
                   </section>
                 )}
 
-                <section>
-                  <div className="mb-3 flex items-end justify-between gap-4">
-                    <div>
-                      <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Expediente visual</p>
-                      <h2 className="mt-1 font-serif text-2xl font-semibold text-[#102238]">Piezas de tu caso</h2>
+                <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
+                  <div className="flex items-start gap-4 px-5 py-5 sm:px-6">
+                    <div className="mt-0.5 grid size-9 shrink-0 place-items-center rounded-lg bg-emerald-50 text-emerald-700">
+                      <ClipboardCheck className="size-[18px]" />
                     </div>
-                    <Button variant="ghost" size="sm" onClick={() => setAddOpen(true)} className="text-[#173f6b]">
-                      <Plus className="size-4" /> Agregar pieza
-                    </Button>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <h2 className="font-semibold text-slate-900">Esto fue lo que entendimos</h2>
+                        <Button variant="ghost" size="sm" onClick={() => openCaseDialog("edit")} className="h-8 text-xs text-slate-500">
+                          <Pencil className="size-3" /> Corregir
+                        </Button>
+                      </div>
+                      <p className="mt-2 text-[15px] leading-7 text-slate-600">{orientation.plainSummary}</p>
+                    </div>
                   </div>
-
-                  <div className="grid gap-3 md:grid-cols-2">
-                    {elements.slice(0, 4).map((element) => (
-                      <article key={element.id} className="group border-l-2 border-slate-300 bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition hover:border-emerald-500 hover:shadow-md">
-                        <div className="flex items-start gap-3">
-                          <div className="grid size-8 shrink-0 place-items-center bg-slate-50 text-slate-500">
-                            {element.type === "pruebas" ? <Paperclip className="size-4" /> : <FileText className="size-4" />}
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center justify-between gap-2">
-                              <p className="truncate text-sm font-semibold text-slate-900">{element.title}</p>
-                              {element.status === "listo" ? (
-                                <Check className="size-4 shrink-0 text-emerald-600" />
-                              ) : (
-                                <span className="size-2 shrink-0 rounded-full bg-amber-400" />
-                              )}
-                            </div>
-                            <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500">{element.detail}</p>
-                            <div className="mt-3 flex items-center justify-between">
-                              <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400">
-                                {typeLabels[element.type]}
-                              </span>
-                              {element.status !== "listo" && (
-                                <button onClick={() => confirmElement(element.id)} className="text-xs font-medium text-[#173f6b] hover:underline">
-                                  Confirmar dato
-                                </button>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      </article>
-                    ))}
+                  <div className="grid gap-px border-t border-slate-100 bg-slate-100 md:grid-cols-2">
+                    <div className="bg-white px-5 py-4 sm:px-6">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-indigo-600">Lo que te protege</p>
+                      <p className="mt-2 text-sm font-semibold text-slate-900">{orientation.rightTitle}</p>
+                      <p className="mt-1.5 text-xs leading-5 text-slate-600">{orientation.rightExplanation}</p>
+                    </div>
+                    <div className="bg-white px-5 py-4 sm:px-6">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">Fuentes para verificar</p>
+                      <div className="mt-2 space-y-2">
+                        {sources.map((source) => (
+                          <a key={source.id} href={source.url} target="_blank" rel="noreferrer" className="flex items-center justify-between gap-3 text-sm font-semibold text-[#173f6b] hover:underline">
+                            <span>{source.shortTitle}</span>
+                            <ExternalLink className="size-3.5 shrink-0" />
+                          </a>
+                        ))}
+                      </div>
+                    </div>
                   </div>
                 </section>
 
-                <section className="rounded-2xl bg-[#102238] px-5 py-5 text-white shadow-lg shadow-slate-900/5 sm:px-6">
-                  <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="flex items-start gap-3">
-                      <div className="grid size-10 shrink-0 place-items-center rounded-lg bg-emerald-400 text-slate-950">
-                        <FileCheck2 className="size-5" />
-                      </div>
-                      <div>
-                        <p className="font-semibold">Tu siguiente resultado: {orientation.recommendedDocument}</p>
-                        <p className="mt-1 max-w-xl text-sm leading-6 text-slate-300">{orientation.documentReason}</p>
-                      </div>
+                <section>
+                  <div className="mb-3 flex items-end justify-between gap-4">
+                    <div>
+                      <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Personaliza tu expediente</p>
+                      <h2 className="mt-1 font-serif text-2xl font-semibold text-[#102238]">Bloques sugeridos para tu caso</h2>
+                      <p className="mt-1 text-sm text-slate-500">Agrega solo los que te sirvan. Nada se incorpora sin tu confirmación.</p>
                     </div>
-                    <Button onClick={() => setDocumentOpen(true)} className="shrink-0 bg-white text-[#102238] hover:bg-slate-100">
-                      Ver borrador
-                      <ArrowRight className="size-4" />
+                    <Button variant="ghost" size="sm" onClick={() => setActiveSection("expediente")} className="hidden text-[#173f6b] sm:inline-flex">
+                      Ver expediente <ChevronRight className="size-4" />
                     </Button>
                   </div>
+
+                  <div className="grid gap-3 md:grid-cols-3">
+                    {caseSuggestions.slice(0, 3).map((suggestion) => (
+                      <article key={suggestion.id} className="flex min-h-48 flex-col rounded-xl border border-slate-200 bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
+                        <div className="flex items-start justify-between gap-3">
+                          <span className="rounded-md bg-slate-100 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">
+                            {typeLabels[suggestion.type]}
+                          </span>
+                          <Plus className="size-4 text-emerald-600" />
+                        </div>
+                        <h3 className="mt-4 text-sm font-semibold text-slate-900">{suggestion.title}</h3>
+                        <p className="mt-2 flex-1 text-xs leading-5 text-slate-600">{suggestion.reason}</p>
+                        <Button variant="outline" size="sm" className="mt-4 w-full text-[#173f6b]" onClick={() => openSuggestedBlock(suggestion)}>
+                          Agregar este bloque
+                        </Button>
+                      </article>
+                    ))}
+                  </div>
+                  {caseSuggestions.length === 0 && (
+                    <div className="rounded-xl border border-dashed border-slate-300 bg-white/70 p-5 text-sm text-slate-600">
+                      Ya agregaste los bloques prioritarios. Puedes crear uno propio desde “Completar mi caso”.
+                    </div>
+                  )}
                 </section>
               </div>
             )}
@@ -922,25 +2045,33 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
                 <div className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6">
                   <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                     <div>
-                      <p className="text-sm font-semibold text-slate-900">Entender → preparar → actuar</p>
-                      <p className="mt-1 text-sm text-slate-500">Marca cada paso cuando lo completes. La ruta se puede compartir con quien revise tu caso.</p>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="text-sm font-semibold text-slate-900">Tu ruta operativa en Colombia</p>
+                        <Badge variant="outline" className="rounded-md border-emerald-200 bg-emerald-50 text-[10px] text-emerald-700">
+                          Verificada 15 ago 2026
+                        </Badge>
+                      </div>
+                      <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-500">
+                        Cada paso indica qué reunir, dónde hacerlo, qué comprobante guardar y qué sigue. Confirma disponibilidad y términos en el canal oficial.
+                      </p>
                     </div>
                     <div className="min-w-40">
                       <div className="mb-2 flex justify-between text-xs text-slate-500">
                         <span>Progreso</span>
-                        <span>{Math.round((completedSteps.length / orientation.nextSteps.length) * 100)}%</span>
+                        <span>{Math.round((completedSteps.length / procedureSteps.length) * 100)}%</span>
                       </div>
-                      <Progress value={(completedSteps.length / orientation.nextSteps.length) * 100} />
+                      <Progress value={(completedSteps.length / procedureSteps.length) * 100} />
                     </div>
                   </div>
                 </div>
 
                 <ol className="space-y-0">
-                  {orientation.nextSteps.map((step, index) => {
+                  {procedureSteps.map((step, index) => {
                     const complete = completedSteps.includes(index);
+                    const stepSources = getOfficialSources(step.sourceIds);
                     return (
                       <li key={step.title} className="relative grid grid-cols-[40px_1fr] gap-4 pb-5 last:pb-0">
-                        {index < orientation.nextSteps.length - 1 && (
+                        {index < procedureSteps.length - 1 && (
                           <span className="absolute left-5 top-10 h-[calc(100%-1.5rem)] w-px bg-slate-300" />
                         )}
                         <button
@@ -956,9 +2087,11 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
                         >
                           {complete ? <Check className="size-4" /> : <span className="text-sm font-bold">{index + 1}</span>}
                         </button>
-                        <article className={`rounded-xl border p-5 ${complete ? "border-emerald-200 bg-emerald-50/60" : "border-slate-200 bg-white"}`}>
+                        <article className={`overflow-hidden rounded-xl border ${complete ? "border-emerald-200 bg-emerald-50/60" : "border-slate-200 bg-white"}`}>
+                          <div className="p-5 sm:p-6">
                           <div className="flex flex-wrap items-start justify-between gap-3">
                             <div>
+                              <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#173f6b]">{step.stage}</p>
                               <p className="font-semibold text-slate-900">{step.title}</p>
                               <p className="mt-1.5 text-sm leading-6 text-slate-600">{step.detail}</p>
                             </div>
@@ -966,154 +2099,388 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
                               {complete ? "Completado" : index === completedSteps.length ? "Haz esto ahora" : "Después"}
                             </Badge>
                           </div>
-                          <div className="mt-4 flex items-start gap-2 border-t border-slate-100 pt-4 text-xs leading-5 text-slate-500">
-                            <Info className="mt-0.5 size-3.5 shrink-0" />
-                            <span>Disponibilidad, requisitos y duración varían según la entidad. Confírmalos en el canal oficial.</span>
+
+                          <div className="mt-5 grid gap-4 border-t border-slate-100 pt-5 md:grid-cols-2">
+                            <div>
+                              <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400">Dónde y cómo</p>
+                              <p className="mt-2 text-sm font-semibold text-slate-900">{step.entity}</p>
+                              <p className="mt-1 text-xs leading-5 text-slate-600">{step.channel}</p>
+                            </div>
+                            <div>
+                              <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400">Qué debes reunir</p>
+                              <ul className="mt-2 space-y-1.5 text-xs leading-5 text-slate-600">
+                                {step.requirements.map((requirement) => (
+                                  <li key={requirement} className="flex gap-2">
+                                    <Check className="mt-0.5 size-3.5 shrink-0 text-emerald-600" />
+                                    <span>{requirement}</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          </div>
+
+                          <div className="mt-5 rounded-xl border border-emerald-100 bg-emerald-50 p-4">
+                            <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-emerald-700">Qué debes obtener</p>
+                            <p className="mt-1.5 text-sm font-semibold text-emerald-950">{step.expectedOutput}</p>
+                            <p className="mt-2 text-xs leading-5 text-emerald-900/75"><strong>Después:</strong> {step.nextAction}</p>
+                          </div>
+
+                          <div className="mt-4 grid gap-2 text-xs leading-5 text-slate-500 sm:grid-cols-2">
+                            <p className="flex items-start gap-2"><Clock3 className="mt-0.5 size-3.5 shrink-0" /> {step.timing}</p>
+                            <p className="flex items-start gap-2"><Info className="mt-0.5 size-3.5 shrink-0" /> {step.cost}</p>
+                          </div>
+                          </div>
+
+                          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 bg-white/70 px-5 py-3">
+                            <div className="flex flex-wrap gap-x-3 gap-y-1">
+                              {stepSources.map((source) => (
+                                <a key={source.id} href={source.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs font-semibold text-[#173f6b] hover:underline">
+                                  {source.shortTitle} <ExternalLink className="size-3" />
+                                </a>
+                              ))}
+                            </div>
+                            <Button variant={complete ? "outline" : "default"} size="sm" onClick={() => toggleStep(index)} className={complete ? "" : "bg-[#173f6b] text-white hover:bg-[#102f51]"}>
+                              {complete ? "Marcar pendiente" : "Marcar completado"}
+                            </Button>
                           </div>
                         </article>
                       </li>
                     );
                   })}
                 </ol>
+
+                <section className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6">
+                  <div className="mb-4">
+                    <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Apoyo gratuito o público</p>
+                    <h2 className="mt-1 font-serif text-2xl font-semibold text-[#102238]">Dónde pedir ayuda para este caso</h2>
+                  </div>
+                  <div className="grid gap-3 md:grid-cols-2">
+                    {orientation.freeHelp.map((help) => {
+                      const helpSource = getOfficialSources([help.sourceId])[0];
+                      return (
+                        <article key={help.name} className="rounded-xl border border-slate-200 p-4">
+                          <div className="flex items-start gap-3">
+                            <div className="grid size-9 shrink-0 place-items-center rounded-lg bg-amber-50 text-amber-700">
+                              <Building2 className="size-4" />
+                            </div>
+                            <div>
+                              <h3 className="text-sm font-semibold text-slate-900">{help.name}</h3>
+                              <p className="mt-1 text-xs leading-5 text-slate-600">{help.detail}</p>
+                              <p className="mt-2 text-xs font-medium text-amber-800">{help.channel}</p>
+                              {helpSource && (
+                                <a href={helpSource.url} target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-[#173f6b] hover:underline">
+                                  Ver canal oficial <ExternalLink className="size-3" />
+                                </a>
+                              )}
+                            </div>
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </div>
+                </section>
               </div>
             )}
 
-            {activeSection !== "resumen" && activeSection !== "ruta" && activeSection !== "documentos" && (
-              <div className="space-y-4">
-                <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-white px-4 py-3">
-                  <p className="text-sm text-slate-600">
-                    {filteredElements.length === 1 ? "1 pieza guardada" : `${filteredElements.length} piezas guardadas`} en esta sección.
-                  </p>
-                  <Button size="sm" onClick={() => setAddOpen(true)} className="bg-[#173f6b] text-white hover:bg-[#102f51]">
-                    <Plus className="size-4" /> Agregar
-                  </Button>
-                </div>
-
-                {activeSection === "normas" && suggestedSources.map((source) => (
-                  <article key={source.id} className="rounded-xl border border-slate-200 bg-white p-5">
-                    <div className="flex items-start gap-4">
-                      <div className="grid size-10 shrink-0 place-items-center rounded-lg bg-indigo-50 text-indigo-700">
-                        <Landmark className="size-5" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <h2 className="font-semibold text-slate-900">{source.shortTitle}</h2>
-                          <Badge variant="outline" className="rounded-md border-emerald-200 bg-emerald-50 text-[10px] text-emerald-700">
-                            Fuente oficial
-                          </Badge>
-                        </div>
-                        <p className="mt-1 text-sm text-slate-600">{source.title}</p>
-                        <p className="mt-3 text-xs text-slate-500">{source.organization} · verifica vigencia y contenido en el sitio original</p>
-                        <div className="mt-4 flex flex-wrap items-center gap-3">
-                          <a href={source.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-sm font-semibold text-[#173f6b] hover:underline">
-                            Abrir fuente original <ExternalLink className="size-3.5" />
-                          </a>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            disabled={savedSourceIds.has(source.id)}
-                            onClick={() => addOfficialSource(source)}
-                          >
-                            {savedSourceIds.has(source.id) ? <Check className="size-3.5" /> : <Plus className="size-3.5" />}
-                            {savedSourceIds.has(source.id) ? "En el expediente" : "Agregar al expediente"}
-                          </Button>
-                        </div>
-                      </div>
-                    </div>
-                  </article>
-                ))}
-
-                {filteredElements.map((element) => (
-                  <article key={element.id} className="rounded-xl border border-slate-200 bg-white p-5">
-                    <div className="flex items-start gap-4">
-                      <div className="grid size-10 shrink-0 place-items-center rounded-lg bg-slate-50 text-slate-600">
-                        {activeSection === "personas" ? <Users className="size-5" /> : activeSection === "fechas" ? <CalendarDays className="size-5" /> : activeSection === "pruebas" ? <Paperclip className="size-5" /> : activeSection === "normas" ? <Landmark className="size-5" /> : <ClipboardCheck className="size-5" />}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <h2 className="font-semibold text-slate-900">{element.title}</h2>
-                          <Badge variant="outline" className={`rounded-md text-[10px] ${element.status === "listo" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"}`}>
-                            {activeSection === "normas" ? "En el expediente" : element.status === "listo" ? "Confirmado" : "Por confirmar"}
-                          </Badge>
-                        </div>
-                        <p className="mt-2 text-sm leading-6 text-slate-600">{element.detail}</p>
-                        {element.date && <p className="mt-3 text-xs font-medium text-slate-500">Fecha: {element.date}</p>}
-                        {element.sourceUrl && (
-                          <a href={element.sourceUrl} target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-1.5 text-sm font-semibold text-[#173f6b] hover:underline">
-                            Abrir fuente guardada <ExternalLink className="size-3.5" />
-                          </a>
-                        )}
-                        {element.status !== "listo" && (
-                          <Button variant="outline" size="sm" className="mt-4" onClick={() => confirmElement(element.id)}>
-                            <Check className="size-3.5" /> Confirmar dato
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-                  </article>
-                ))}
-
-                {filteredElements.length === 0 && activeSection !== "normas" && (
-                  <div className="grid min-h-64 place-items-center rounded-2xl border border-dashed border-slate-300 bg-white/60 p-8 text-center">
-                    <div>
-                      <div className="mx-auto grid size-11 place-items-center rounded-xl bg-slate-100 text-slate-500">
-                        <Plus className="size-5" />
-                      </div>
-                      <p className="mt-4 font-semibold text-slate-800">Aún no hay piezas aquí</p>
-                      <p className="mt-1 text-sm text-slate-500">Agrega lo que ya tengas. Te mostraremos qué hace falta.</p>
-                      <Button className="mt-4 bg-[#173f6b] text-white hover:bg-[#102f51]" onClick={() => setAddOpen(true)}>
-                        Agregar primera pieza
-                      </Button>
+            {activeSection === "expediente" && (
+              <div className="space-y-6">
+                <section className="flex flex-col gap-4 rounded-2xl border border-slate-200 bg-white p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-900">Un expediente que se adapta a tu caso</p>
+                    <p className="mt-1 text-sm leading-6 text-slate-500">Agrega bloques sugeridos, carga varios documentos o crea una pieza propia. Tú decides qué incorporar y cómo clasificarlo.</p>
+                    <div className="mt-3 flex items-center gap-3 text-xs text-slate-500">
+                      <span>{elements.length} bloques</span>
+                      <span aria-hidden="true">·</span>
+                      <span>{completeness}% de tipos cubiertos</span>
                     </div>
                   </div>
+                  <div className="flex flex-wrap gap-2">
+                    {storedFileCount > 0 && accountState === "active" && (
+                      <Button
+                        variant="ghost"
+                        disabled={isPurgingCaseFiles}
+                        onClick={() => {
+                          void purgeStoredCaseFiles(true)
+                            .then((deleted) => {
+                              if (deleted) setNotice("Todos los documentos originales fueron eliminados");
+                            })
+                            .catch((error) =>
+                              setNotice(
+                                error instanceof Error
+                                  ? error.message
+                                  : "No fue posible eliminar los documentos",
+                              ),
+                            );
+                        }}
+                        className="text-rose-700 hover:bg-rose-50 hover:text-rose-800"
+                      >
+                        {isPurgingCaseFiles ? <LoaderCircle className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
+                        {isPurgingCaseFiles ? "Eliminando…" : "Eliminar documentos"}
+                      </Button>
+                    )}
+                    <Button variant="outline" onClick={openBulkCaseFileUpload} className="text-[#173f6b]">
+                      <Files className="size-4" /> Cargar documentos
+                    </Button>
+                    <Button onClick={openCustomBlock} className="bg-[#173f6b] text-white hover:bg-[#102f51]">
+                      <Plus className="size-4" /> Crear bloque propio
+                    </Button>
+                  </div>
+                </section>
+
+                {caseSuggestions.length > 0 && (
+                  <section>
+                    <div className="mb-3">
+                      <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Sugerencias según tu relato</p>
+                      <h2 className="mt-1 font-serif text-2xl font-semibold text-[#102238]">Completa lo que puede cambiar la ruta</h2>
+                    </div>
+                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                      {caseSuggestions.map((suggestion) => (
+                        <article key={suggestion.id} className="flex flex-col rounded-xl border border-slate-200 bg-white p-4">
+                          <div className="flex items-center justify-between gap-3">
+                            <Badge variant="outline" className="rounded-md text-[10px]">{typeLabels[suggestion.type]}</Badge>
+                            <span className="text-[10px] font-bold text-emerald-700">SUGERIDO</span>
+                          </div>
+                          <h3 className="mt-3 text-sm font-semibold text-slate-900">{suggestion.title}</h3>
+                          <p className="mt-2 flex-1 text-xs leading-5 text-slate-600">{suggestion.reason}</p>
+                          <Button variant="outline" size="sm" className="mt-4 w-full text-[#173f6b]" onClick={() => openSuggestedBlock(suggestion)}>
+                            <Plus className="size-3.5" /> Agregar y completar
+                          </Button>
+                        </article>
+                      ))}
+                    </div>
+                  </section>
+                )}
+
+                <section>
+                  <div className="mb-3 flex items-end justify-between gap-4">
+                    <div>
+                      <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Lo que ya agregaste</p>
+                      <h2 className="mt-1 font-serif text-2xl font-semibold text-[#102238]">Bloques de tu expediente</h2>
+                    </div>
+                  </div>
+                  <div className="grid gap-3 md:grid-cols-2">
+                    {elements.map((element) => (
+                      <article key={element.id} className="rounded-xl border border-slate-200 bg-white p-5">
+                        <div className="flex items-start gap-4">
+                          <div className="grid size-10 shrink-0 place-items-center rounded-lg bg-slate-50 text-slate-600">
+                            {element.type === "personas" ? <Users className="size-5" /> : element.type === "fechas" ? <CalendarDays className="size-5" /> : element.type === "pruebas" ? <Paperclip className="size-5" /> : element.type === "normas" ? <Landmark className="size-5" /> : <ClipboardCheck className="size-5" />}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <h3 className="font-semibold text-slate-900">{element.title}</h3>
+                              <Badge variant="outline" className={`rounded-md text-[10px] ${element.status === "listo" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"}`}>
+                                {element.attachment
+                                  ? "Archivo cargado"
+                                  : element.status === "listo"
+                                    ? "Confirmado"
+                                    : "Por confirmar"}
+                              </Badge>
+                            </div>
+                            <p className="mt-2 text-sm leading-6 text-slate-600">{element.detail}</p>
+                            <p className="mt-3 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400">
+                              {caseElementTypeLabel(element)}
+                            </p>
+                            {element.date && <p className="mt-2 text-xs font-medium text-slate-500">Fecha: {element.date}</p>}
+                            {element.sourceUrl && (
+                              <a href={element.sourceUrl} target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-1.5 text-sm font-semibold text-[#173f6b] hover:underline">
+                                Abrir fuente guardada <ExternalLink className="size-3.5" />
+                              </a>
+                            )}
+                            {element.attachment && (
+                              <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                                <Label htmlFor={`stored-file-type-${element.attachment.id}`} className="text-xs font-semibold text-slate-700">
+                                  Clasificación de esta pieza
+                                </Label>
+                                <select
+                                  id={`stored-file-type-${element.attachment.id}`}
+                                  aria-label={`Clasificación de ${element.attachment.fileName}`}
+                                  value={element.type}
+                                  disabled={busyCaseFileIds.includes(element.attachment.id)}
+                                  onChange={(event) =>
+                                    void reclassifyStoredCaseFile(
+                                      element,
+                                      event.target.value as CaseElementType,
+                                    )
+                                  }
+                                  className="mt-2 flex h-9 w-full rounded-md border border-input bg-white px-3 py-1 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-60"
+                                >
+                                  {Object.entries(uploadTypeLabels).map(([value, label]) => (
+                                    <option key={value} value={value}>{label}</option>
+                                  ))}
+                                </select>
+                                <p className="mt-2 text-[11px] leading-4 text-slate-500">
+                                  Esta clasificación solo organiza el expediente; no verifica el contenido ni la autenticidad del archivo.
+                                </p>
+                                <div className="mt-3 flex flex-wrap gap-3">
+                                  <button
+                                    type="button"
+                                    disabled={busyCaseFileIds.includes(element.attachment.id)}
+                                    aria-label={`Descargar original ${element.attachment.fileName}`}
+                                    onClick={() => void downloadStoredCaseFile(element)}
+                                    className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#173f6b] hover:underline disabled:opacity-50"
+                                  >
+                                    <Download className="size-3.5" /> Descargar original
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={busyCaseFileIds.includes(element.attachment.id)}
+                                    aria-label={`Eliminar original ${element.attachment.fileName}`}
+                                    onClick={() => void deleteStoredCaseFile(element)}
+                                    className="inline-flex items-center gap-1.5 text-xs font-semibold text-rose-700 hover:underline disabled:opacity-50"
+                                  >
+                                    <Trash2 className="size-3.5" /> Eliminar original
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                            {element.status !== "listo" && (
+                              <Button variant="outline" size="sm" className="mt-4" onClick={() => confirmElement(element.id)}>
+                                <Check className="size-3.5" /> Confirmar bloque
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                </section>
+
+                {suggestedSources.length > 0 && (
+                  <section className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6">
+                    <div className="mb-4">
+                      <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Trazabilidad</p>
+                      <h2 className="mt-1 font-serif text-2xl font-semibold text-[#102238]">Fuentes oficiales sugeridas</h2>
+                      <p className="mt-1 text-sm text-slate-500">Ábrelas y verifica su vigencia antes de actuar; puedes guardarlas como bloques del expediente.</p>
+                    </div>
+                    <div className="grid gap-3 md:grid-cols-2">
+                      {suggestedSources.map((source) => (
+                        <article key={source.id} className="rounded-xl border border-slate-200 p-4">
+                          <div className="flex items-start gap-3">
+                            <Landmark className="mt-0.5 size-4 shrink-0 text-indigo-600" />
+                            <div className="min-w-0">
+                              <h3 className="text-sm font-semibold text-slate-900">{source.shortTitle}</h3>
+                              <p className="mt-1 text-xs leading-5 text-slate-600">{source.organization}</p>
+                              <div className="mt-3 flex flex-wrap gap-2">
+                                <a href={source.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs font-semibold text-[#173f6b] hover:underline">
+                                  Abrir original <ExternalLink className="size-3" />
+                                </a>
+                                <button onClick={() => addOfficialSource(source)} className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700 hover:underline">
+                                  <Plus className="size-3" /> Guardar como bloque
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  </section>
                 )}
               </div>
             )}
 
-            {activeSection === "documentos" && (
-              <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_240px]">
-                <div className="rounded-xl border border-slate-200 bg-white p-5 sm:p-7">
-                  <div className="mb-6 flex items-center justify-between border-b border-slate-100 pb-4">
-                    <div>
-                      <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">Vista previa del borrador</p>
-                      <h2 className="mt-1 font-serif text-xl font-semibold text-[#102238]">{orientation.recommendedDocument}</h2>
+            {activeSection === "resultados" && (
+              <div className="space-y-6">
+                <section>
+                  <div className="mb-4">
+                    <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Salidas reutilizables</p>
+                    <h2 className="mt-1 font-serif text-2xl font-semibold text-[#102238]">Lo que obtienes con tu expediente</h2>
+                    <p className="mt-1 text-sm text-slate-500">Cada resultado muestra su estado y la acción necesaria para terminarlo.</p>
+                  </div>
+                  <div className="grid gap-3 md:grid-cols-2">
+                    {caseOutputs.map((output) => (
+                      <article key={output.id} className="flex flex-col rounded-xl border border-slate-200 bg-white p-5">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="grid size-10 place-items-center rounded-lg bg-slate-50 text-[#173f6b]">
+                            <FileCheck2 className="size-5" />
+                          </div>
+                          <Badge variant="outline" className={`rounded-md text-[10px] ${output.status === "listo" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : output.status === "en-proceso" ? "border-sky-200 bg-sky-50 text-sky-700" : "border-slate-200 bg-slate-50 text-slate-600"}`}>
+                            {output.status === "listo" ? "Listo" : output.status === "en-proceso" ? "En proceso" : "Pendiente"}
+                          </Badge>
+                        </div>
+                        <h3 className="mt-4 font-semibold text-slate-900">{output.title}</h3>
+                        <p className="mt-2 flex-1 text-sm leading-6 text-slate-600">{output.detail}</p>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="mt-4 w-full text-[#173f6b]"
+                          onClick={() => {
+                            if (output.id === "ruta") setActiveSection("ruta");
+                            else if (output.id === "borrador") setDocumentOpen(true);
+                            else if (output.id === "carpeta") downloadCaseFile();
+                            else setActiveSection("expediente");
+                          }}
+                        >
+                          {output.actionLabel} <ArrowRight className="size-3.5" />
+                        </Button>
+                      </article>
+                    ))}
+                  </div>
+                </section>
+
+                <section className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_260px]">
+                  <div className="rounded-xl border border-slate-200 bg-white p-5 sm:p-7">
+                    <div className="mb-6 flex items-center justify-between border-b border-slate-100 pb-4">
+                      <div>
+                        <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">Vista previa del borrador</p>
+                        <h2 className="mt-1 font-serif text-xl font-semibold text-[#102238]">{orientation.recommendedDocument}</h2>
+                      </div>
+                      <Badge variant="outline" className={`rounded-md ${isSummaryDocument ? "border-sky-200 bg-sky-50 text-sky-700" : "border-amber-200 bg-amber-50 text-amber-700"}`}>
+                        {isSummaryDocument ? "Resumen informativo" : "Requiere revisión"}
+                      </Badge>
                     </div>
-                    <Badge variant="outline" className={`rounded-md ${isSummaryDocument ? "border-sky-200 bg-sky-50 text-sky-700" : "border-amber-200 bg-amber-50 text-amber-700"}`}>
-                      {isSummaryDocument ? "Resumen informativo" : "Completa los campos"}
-                    </Badge>
+                    <div className="max-h-[520px] overflow-auto whitespace-pre-wrap font-serif text-sm leading-7 text-slate-700">
+                      {exportedDraftText}
+                    </div>
                   </div>
-                  <div className="max-h-[560px] overflow-auto whitespace-pre-wrap font-serif text-sm leading-7 text-slate-700">
-                    {draftText}
-                  </div>
-                </div>
-                <aside className="space-y-3">
-                  <div className="rounded-xl border border-slate-200 bg-white p-4">
-                    <p className="text-sm font-semibold text-slate-900">Antes de descargar</p>
-                    <ul className="mt-3 space-y-2 text-xs text-slate-600">
-                      {isSummaryDocument ? (
-                        <>
-                          <li className="flex gap-2"><AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-amber-600" /> Revisa que hechos y fechas sean correctos.</li>
-                          <li className="flex gap-2"><AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-amber-600" /> Llévalo a revisión humana antes de actuar.</li>
-                        </>
-                      ) : (
-                        <>
-                          <li className="flex gap-2"><AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-amber-600" /> Completa nombre e identificación.</li>
-                          <li className="flex gap-2"><AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-amber-600" /> Verifica la persona o entidad destinataria.</li>
-                        </>
-                      )}
-                      <li className="flex gap-2">
-                        {evidenceCount > 0 ? <Check className="mt-0.5 size-3.5 shrink-0 text-emerald-600" /> : <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-amber-600" />}
-                        {evidenceCount > 0 ? `${evidenceCount} ${evidenceCount === 1 ? "prueba listada" : "pruebas listadas"}.` : "Aún no agregaste pruebas."}
-                      </li>
-                    </ul>
-                  </div>
-                  <Button className="w-full bg-[#173f6b] text-white hover:bg-[#102f51]" onClick={() => downloadText(draftFilename, draftText)}>
-                    <Download className="size-4" /> Descargar borrador
-                  </Button>
-                  <Button variant="outline" className="w-full" onClick={downloadCaseFile}>
-                    <FolderOpen className="size-4" /> Preparar carpeta
-                  </Button>
-                </aside>
+                  <aside className="space-y-3">
+                    <div className="rounded-xl border border-slate-200 bg-white p-4">
+                      <p id="draft-export-format-label" className="text-sm font-semibold text-slate-900">Formato del borrador</p>
+                      <div className="mt-3 grid grid-cols-2 gap-2" role="radiogroup" aria-labelledby="draft-export-format-label">
+                        {DRAFT_EXPORT_OPTIONS.map((option) => {
+                          const selected = option.value === draftExportFormat;
+                          return (
+                            <Button
+                              key={option.value}
+                              type="button"
+                              variant={selected ? "default" : "outline"}
+                              size="sm"
+                              role="radio"
+                              aria-checked={selected}
+                              onClick={() => setDraftExportFormat(option.value)}
+                              className={`h-auto min-h-9 whitespace-normal px-2 py-2 text-center text-xs leading-4 ${selected ? "bg-[#173f6b] text-white hover:bg-[#102f51]" : "text-slate-700"}`}
+                            >
+                              {option.label}
+                            </Button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    {draftExportFormat === "tutela" ? (
+                      <div role="alert" className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-4 text-xs leading-5 text-amber-950">
+                        <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-700" />
+                        <p>{TUTELA_EXPORT_WARNING}</p>
+                      </div>
+                    ) : (
+                      <div className="rounded-xl border border-slate-200 bg-white p-4">
+                        <p className="text-sm font-semibold text-slate-900">Antes de usarlo</p>
+                        <ul className="mt-3 space-y-2 text-xs leading-5 text-slate-600">
+                          <li className="flex gap-2"><AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-amber-600" /> Revisa hechos, fechas, destinatario y solicitudes.</li>
+                          <li className="flex gap-2"><AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-amber-600" /> Este archivo no se radica automáticamente.</li>
+                          <li className="flex gap-2">
+                            {evidenceCount > 0 ? <Check className="mt-0.5 size-3.5 shrink-0 text-emerald-600" /> : <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-amber-600" />}
+                            {evidenceCount > 0 ? `${evidenceCount} ${evidenceCount === 1 ? "prueba registrada" : "pruebas registradas"}.` : "Aún no registraste pruebas."}
+                          </li>
+                        </ul>
+                      </div>
+                    )}
+                    <Button className="w-full bg-[#173f6b] text-white hover:bg-[#102f51]" onClick={() => downloadText(exportedDraftFilename, exportedDraftText)}>
+                      <Download className="size-4" /> Descargar borrador
+                    </Button>
+                    <Button variant="outline" className="w-full" onClick={downloadCaseFile}>
+                      <FolderOpen className="size-4" /> Descargar carpeta
+                    </Button>
+                  </aside>
+                </section>
               </div>
             )}
 
@@ -1124,134 +2491,6 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
           </div>
         </main>
 
-        <aside className="hidden border-l border-slate-200 bg-[#fbfaf7] 2xl:block">
-          <div className="sticky top-16 h-[calc(100vh-4rem)] overflow-y-auto px-5 py-7">
-            <div className="mb-5 flex items-center justify-between">
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">Guía para este paso</p>
-                <h2 className="mt-1 font-serif text-xl font-semibold text-[#102238]">Tu orientación</h2>
-              </div>
-              <div className="grid size-8 place-items-center rounded-full bg-emerald-50 text-emerald-700">
-                <Sparkles className="size-4" />
-              </div>
-            </div>
-
-            <div className="space-y-3">
-              <section className="border-l-2 border-indigo-500 bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.05)]">
-                <div className="flex items-center gap-2 text-indigo-700">
-                  <Scale className="size-4" />
-                  <p className="text-[10px] font-bold uppercase tracking-[0.14em]">Tu derecho</p>
-                </div>
-                <h3 className="mt-3 text-sm font-semibold leading-5 text-slate-900">{orientation.rightTitle}</h3>
-                <p className="mt-2 text-xs leading-5 text-slate-600">{orientation.rightExplanation}</p>
-                <div className="mt-3 space-y-1.5">
-                  {sources.map((source) => (
-                    <a key={source.id} href={source.url} target="_blank" rel="noreferrer" className="flex items-center justify-between gap-2 text-xs font-medium text-[#173f6b] hover:underline">
-                      <span className="truncate">{source.shortTitle}</span>
-                      <ExternalLink className="size-3 shrink-0" />
-                    </a>
-                  ))}
-                </div>
-              </section>
-
-              <section className="border-l-2 border-emerald-500 bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.05)]">
-                <div className="flex items-center gap-2 text-emerald-700">
-                  <ArrowRight className="size-4" />
-                  <p className="text-[10px] font-bold uppercase tracking-[0.14em]">Qué hacer ahora</p>
-                </div>
-                <p className="mt-3 text-sm font-semibold text-slate-900">{orientation.nextSteps[0]?.title}</p>
-                <p className="mt-1.5 text-xs leading-5 text-slate-600">{orientation.nextSteps[0]?.detail}</p>
-                <Button variant="outline" size="sm" className="mt-3 h-8 w-full text-xs" onClick={() => setActiveSection("ruta")}>
-                  Ver ruta completa <ChevronRight className="size-3" />
-                </Button>
-              </section>
-
-              <section className="border-l-2 border-amber-500 bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.05)]">
-                <div className="flex items-center gap-2 text-amber-700">
-                  <Building2 className="size-4" />
-                  <p className="text-[10px] font-bold uppercase tracking-[0.14em]">A dónde ir gratis</p>
-                </div>
-                <div className="mt-3 space-y-3">
-                  {orientation.freeHelp.map((help, index) => (
-                    <div key={help.name} className={index > 0 ? "border-t border-slate-100 pt-3" : ""}>
-                      <p className="text-sm font-semibold text-slate-900">{help.name}</p>
-                      <p className="mt-1 text-xs leading-5 text-slate-600">{help.detail}</p>
-                      <p className="mt-1.5 flex items-start gap-1 text-[11px] font-medium text-amber-800">
-                        <MapPin className="mt-0.5 size-3 shrink-0" /> {help.channel}
-                      </p>
-                      {getOfficialSources([help.sourceId])[0] && (
-                        <a
-                          href={getOfficialSources([help.sourceId])[0].url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="mt-2 inline-flex items-center gap-1 text-[11px] font-semibold text-[#173f6b] hover:underline"
-                        >
-                          Ver canal oficial <ExternalLink className="size-3" />
-                        </a>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </section>
-            </div>
-
-            <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-4">
-              <div className="flex items-center justify-between text-xs">
-                <span className="font-medium text-slate-700">Expediente preparado</span>
-                <span className="font-bold text-[#173f6b]">{completeness}%</span>
-              </div>
-              <Progress value={completeness} className="mt-2 h-1.5" />
-              <Button variant="ghost" size="sm" className="mt-2 h-8 w-full justify-between px-0 text-xs text-[#173f6b] hover:bg-transparent" onClick={downloadCaseFile}>
-                Preparar carpeta para revisión <Download className="size-3.5" />
-              </Button>
-            </div>
-          </div>
-        </aside>
-      </div>
-
-      <div className="fixed bottom-4 right-4 z-30 2xl:hidden">
-        <Sheet>
-          <SheetTrigger
-            render={<Button className="rounded-full bg-[#102238] px-4 text-white shadow-xl hover:bg-[#173f6b]" />}
-          >
-            <Sparkles className="size-4 text-emerald-300" /> Ver orientación
-          </SheetTrigger>
-          <SheetContent className="w-full overflow-y-auto bg-[#fbfaf7] sm:max-w-md">
-            <SheetHeader>
-              <SheetTitle className="font-serif text-2xl text-[#102238]">Tu orientación</SheetTitle>
-              <SheetDescription>Se construye con lo que confirmaste y enlaza fuentes oficiales para verificación.</SheetDescription>
-            </SheetHeader>
-            <div className="mt-6 space-y-4">
-              <section className="border-l-2 border-indigo-500 bg-white p-4 shadow-sm">
-                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-indigo-700">Tu derecho</p>
-                <h3 className="mt-2 font-semibold text-slate-900">{orientation.rightTitle}</h3>
-                <p className="mt-2 text-sm leading-6 text-slate-600">{orientation.rightExplanation}</p>
-              </section>
-              <section className="border-l-2 border-emerald-500 bg-white p-4 shadow-sm">
-                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-emerald-700">Qué hacer ahora</p>
-                <p className="mt-2 font-semibold text-slate-900">{orientation.nextSteps[0]?.title}</p>
-                <p className="mt-1 text-sm text-slate-600">{orientation.nextSteps[0]?.detail}</p>
-              </section>
-              <section className="border-l-2 border-amber-500 bg-white p-4 shadow-sm">
-                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-amber-700">A dónde ir gratis</p>
-                {orientation.freeHelp.map((help) => (
-                  <div key={help.name} className="mt-3">
-                    <p className="font-semibold text-slate-900">{help.name}</p>
-                    <p className="mt-1 text-sm text-slate-600">{help.detail}</p>
-                    <p className="mt-2 flex items-start gap-1 text-xs font-medium text-amber-800">
-                      <MapPin className="mt-0.5 size-3 shrink-0" /> {help.channel}
-                    </p>
-                    {getOfficialSources([help.sourceId])[0] && (
-                      <a href={getOfficialSources([help.sourceId])[0].url} target="_blank" rel="noreferrer" className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-[#173f6b] hover:underline">
-                        Ver canal oficial <ExternalLink className="size-3" />
-                      </a>
-                    )}
-                  </div>
-                ))}
-              </section>
-            </div>
-          </SheetContent>
-        </Sheet>
       </div>
 
       <Dialog
@@ -1267,11 +2506,17 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
               <Sparkles className="size-5" />
             </div>
             <DialogTitle className="font-serif text-2xl text-[#102238]">
-              {caseDialogMode === "new" ? "Reemplaza el caso actual" : "Edita tu relato"}
+              {caseDialogMode === "new"
+                ? hasAnalyzedCase
+                  ? "Reemplaza el caso actual"
+                  : "Organiza tu caso con IA"
+                : "Edita tu relato"}
             </DialogTitle>
             <DialogDescription className="text-sm leading-6">
               {caseDialogMode === "new"
-                ? "Este MVP mantiene un solo expediente. Al organizar el nuevo relato reemplazarás el caso actual; descarga su carpeta antes si necesitas conservarlo."
+                ? hasAnalyzedCase
+                  ? "La aplicación mantiene un expediente activo. Al organizar el nuevo relato reemplazarás el caso actual y se eliminarán sus originales guardados; descarga primero la carpeta y cada archivo que necesites conservar."
+                  : "Cuéntanos tu situación en palabras sencillas. La IA organizará los hechos y propondrá una ruta inicial para que la verifiques."
                 : "Escríbelo como se lo contarías a alguien de confianza. No necesitas usar palabras legales: organizaremos la información contigo."}
             </DialogDescription>
           </DialogHeader>
@@ -1289,7 +2534,9 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
                 placeholder="Ejemplo: trabajo en un restaurante y no me pagan hace dos meses…"
                 className="resize-none text-[15px] leading-6"
               />
-              <p className="text-xs text-slate-500">Esta es una demo pública: usa datos ficticios y no incluyas nombres, documentos de identidad, direcciones, contraseñas ni datos bancarios.</p>
+              <p className="text-xs text-slate-500">
+                {EXTERNAL_PROCESSING_COPY} Incluye solo los datos necesarios y evita documentos de identidad, direcciones, contraseñas o datos bancarios.
+              </p>
             </div>
             <div className="space-y-2">
               <Label htmlFor="city">Municipio o ciudad</Label>
@@ -1302,9 +2549,7 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
                 onChange={(event) => setProcessingConsent(event.target.checked)}
                 className="mt-0.5 size-4 accent-[#173f6b]"
               />
-              <span className="text-xs leading-5 text-slate-600">
-                Autorizo procesar este relato para organizar el caso. Si la IA está conectada, el texto se enviará al proveedor configurado. La integración solicita no almacenar la respuesta, pero pueden aplicar sus políticas de tratamiento y retención. Esta herramienta no es un abogado: el envío no crea una relación abogado–cliente ni secreto profesional. Evitaré incluir datos innecesarios.
-              </span>
+              <span className="text-xs leading-5 text-slate-600">{PROCESSING_CONSENT_COPY}</span>
             </label>
             {formError && (
               <div role="alert" className="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">
@@ -1314,19 +2559,215 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
           </div>
           <DialogFooter className="gap-2 sm:gap-0">
             <Button variant="ghost" onClick={() => setNewCaseOpen(false)}>Cancelar</Button>
-            <Button disabled={story.trim().length < 12 || city.trim().length < 2 || !processingConsent || isAnalyzing} onClick={analyzeCase} className="bg-[#173f6b] text-white hover:bg-[#102f51]">
+            <Button disabled={!isOrientationFormReady({ story, city, processingConsent }) || isAnalyzing} onClick={() => void analyzeCase()} className="bg-[#173f6b] text-white hover:bg-[#102f51]">
               {isAnalyzing ? <LoaderCircle className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
-              {isAnalyzing ? "Ordenando tu relato…" : "Organizar mi caso"}
+              {isAnalyzing ? "Organizando tu relato…" : "Ver respuesta preliminar"}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      <Dialog open={addOpen} onOpenChange={setAddOpen}>
+      <Dialog
+        open={bulkUploadOpen}
+        onOpenChange={(open) => {
+          if (isUploadingCaseFiles) return;
+          setBulkUploadOpen(open);
+          if (!open) {
+            setPendingCaseFiles([]);
+            setCaseFileErrors([]);
+            setCaseFileStorageConsent(false);
+          }
+        }}
+      >
+        <DialogContent
+          showCloseButton={!isUploadingCaseFiles}
+          className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-3xl"
+        >
+          <DialogHeader>
+            <div className="mb-2 grid size-10 place-items-center rounded-xl bg-sky-50 text-sky-700">
+              <Files className="size-5" />
+            </div>
+            <DialogTitle className="font-serif text-2xl text-[#102238]">Carga y clasifica varios documentos</DialogTitle>
+            <DialogDescription className="leading-6">
+              Selecciona hasta {MAX_CASE_FILES_PER_BATCH} archivos. Sugerimos una categoría usando solo el nombre y el formato; puedes corregirla antes o después de cargarlos.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            {accountState === "active" ? (
+              <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4">
+                <Label htmlFor="case-files" className="font-semibold text-slate-900">Seleccionar documentos</Label>
+                <Input
+                  ref={caseFileInputRef}
+                  id="case-files"
+                  type="file"
+                  multiple
+                  accept=".pdf,.docx,.txt,.jpg,.jpeg,.png,.webp"
+                  disabled={isUploadingCaseFiles}
+                  onChange={selectCaseFiles}
+                  className="mt-3 cursor-pointer bg-white file:cursor-pointer"
+                />
+                <p className="mt-2 text-xs leading-5 text-slate-500">
+                  PDF, DOCX, TXT, JPG, PNG o WEBP · máximo {formatCaseFileSize(MAX_CASE_FILE_SIZE_BYTES)} por archivo y {formatCaseFileSize(MAX_CASE_BATCH_SIZE_BYTES)} por selección.
+                </p>
+              </div>
+            ) : (
+              <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-950">
+                <ShieldCheck className="mt-1 size-4 shrink-0" />
+                <div>
+                  <p>La carga de originales requiere una cuenta con guardado cifrado activo. Puedes seguir creando bloques manuales sin cargar archivos.</p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="mt-3 border-amber-300 bg-white text-amber-950"
+                    onClick={() => {
+                      setBulkUploadOpen(false);
+                      openCustomBlock();
+                    }}
+                  >
+                    Crear referencia manual
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {pendingCaseFiles.length > 0 && (
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-sm font-semibold text-slate-900">
+                    {pendingCaseFiles.length} {pendingCaseFiles.length === 1 ? "archivo seleccionado" : "archivos seleccionados"}
+                  </p>
+                  <p aria-live="polite" className="text-xs text-slate-500">
+                    {isUploadingCaseFiles || pendingCaseFiles.some((item) => item.status !== "ready")
+                      ? `${pendingCaseFiles.filter((item) => item.status === "uploaded" || item.status === "error").length} de ${pendingCaseFiles.length} procesados`
+                      : "Listos para clasificar y cargar"}
+                  </p>
+                </div>
+                {isUploadingCaseFiles && (
+                  <Progress
+                    value={
+                      (pendingCaseFiles.filter((item) => item.status === "uploaded" || item.status === "error").length /
+                        pendingCaseFiles.length) * 100
+                    }
+                  />
+                )}
+                <div className="max-h-[42vh] space-y-2 overflow-y-auto pr-1">
+                  {pendingCaseFiles.map((item) => (
+                    <div key={item.id} className="rounded-xl border border-slate-200 bg-white p-3">
+                      <div className="flex items-start gap-3">
+                        <FileText className="mt-1 size-4 shrink-0 text-slate-500" />
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-semibold text-slate-900" title={item.file.name}>{item.file.name}</p>
+                          <p className="mt-0.5 text-xs text-slate-500">
+                            {formatCaseFileSize(item.file.size)}
+                            {item.status === "uploading" ? " · Cargando y guardando de forma cifrada…" : ""}
+                            {item.status === "uploaded" ? " · Cargado" : ""}
+                            {item.status === "error" ? " · Requiere revisión" : ""}
+                          </p>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          disabled={isUploadingCaseFiles}
+                          aria-label={`Quitar ${item.file.name}`}
+                          onClick={() => removePendingCaseFile(item.id)}
+                          className="size-8 shrink-0 text-slate-500 hover:text-rose-700"
+                        >
+                          <X className="size-4" />
+                        </Button>
+                      </div>
+                      <div className="mt-3">
+                        <Label htmlFor={`pending-file-type-${item.id}`} className="text-xs font-semibold text-slate-700">
+                          Tipo de pieza
+                        </Label>
+                        <select
+                          id={`pending-file-type-${item.id}`}
+                          aria-label={`Tipo de pieza para ${item.file.name}`}
+                          value={item.pieceType}
+                          disabled={isUploadingCaseFiles}
+                          onChange={(event) => classifyPendingCaseFile(item.id, event.target.value as CaseElementType)}
+                          className="mt-1.5 flex h-9 w-full rounded-md border border-input bg-white px-3 py-1 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-60"
+                        >
+                          {Object.entries(uploadTypeLabels).map(([value, label]) => (
+                            <option key={value} value={value}>{label}</option>
+                          ))}
+                        </select>
+                      </div>
+                      {item.error && <p className="mt-2 text-xs text-rose-700">{item.error}</p>}
+                    </div>
+                  ))}
+                </div>
+                <p className="text-xs leading-5 text-slate-500">
+                  La clasificación es organizativa y no verifica la autenticidad. El contenido de los archivos no se envía al análisis de IA.
+                </p>
+              </div>
+            )}
+
+            {accountState === "active" && pendingCaseFiles.length > 0 && (
+              <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <input
+                  type="checkbox"
+                  checked={caseFileStorageConsent}
+                  disabled={isUploadingCaseFiles}
+                  onChange={(event) => setCaseFileStorageConsent(event.target.checked)}
+                  className="mt-0.5 size-4 accent-[#173f6b]"
+                />
+                <span className="text-xs leading-5 text-slate-600">{CASE_FILE_STORAGE_CONSENT}</span>
+              </label>
+            )}
+
+            {caseFileErrors.length > 0 && (
+              <div role="alert" className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs leading-5 text-rose-800">
+                <p className="font-semibold">Revisa estos archivos:</p>
+                <ul className="mt-1 list-disc space-y-1 pl-5">
+                  {caseFileErrors.map((error, index) => <li key={`${index}-${error}`}>{error}</li>)}
+                </ul>
+              </div>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button variant="ghost" disabled={isUploadingCaseFiles} onClick={() => setBulkUploadOpen(false)}>Cancelar</Button>
+            <Button
+              disabled={
+                accountState !== "active" ||
+                pendingCaseFiles.length === 0 ||
+                !caseFileStorageConsent ||
+                isUploadingCaseFiles
+              }
+              onClick={() => void uploadPendingCaseFiles()}
+              className="bg-[#173f6b] text-white hover:bg-[#102f51]"
+            >
+              {isUploadingCaseFiles ? <LoaderCircle className="size-4 animate-spin" /> : <Upload className="size-4" />}
+              {isUploadingCaseFiles
+                ? "Cargando documentos…"
+                : pendingCaseFiles.length === 0
+                  ? "Selecciona archivos"
+                  : `Cargar ${pendingCaseFiles.length} ${pendingCaseFiles.length === 1 ? "pieza" : "piezas"}`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={addOpen}
+        onOpenChange={(open) => {
+          setAddOpen(open);
+          if (!open) setSelectedSuggestion(null);
+        }}
+      >
         <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle className="font-serif text-2xl text-[#102238]">Agregar una pieza</DialogTitle>
-            <DialogDescription>Guarda un hecho, una persona, una prueba o cualquier dato que ayude a entender tu caso.</DialogDescription>
+            <DialogTitle className="font-serif text-2xl text-[#102238]">
+              {selectedSuggestion ? `Agregar: ${selectedSuggestion.title}` : "Crear un bloque para tu caso"}
+            </DialogTitle>
+            <DialogDescription>
+              {selectedSuggestion
+                ? selectedSuggestion.reason
+                : "Guarda un hecho, una persona, una prueba o cualquier dato que ayude a entender tu caso."}
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
             <div className="space-y-2">
@@ -1345,23 +2786,24 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
               <Input id="element-title" value={newElement.title} onChange={(event) => setNewElement((current) => ({ ...current, title: event.target.value }))} placeholder="Ej. Captura del aviso por WhatsApp" />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="element-detail">Por qué puede servir</Label>
-              <Textarea id="element-detail" value={newElement.detail} onChange={(event) => setNewElement((current) => ({ ...current, detail: event.target.value }))} placeholder="Describe qué muestra o qué ocurrió" />
+              <Label htmlFor="element-detail">Información del bloque</Label>
+              <Textarea id="element-detail" value={newElement.detail} onChange={(event) => setNewElement((current) => ({ ...current, detail: event.target.value }))} placeholder={selectedSuggestion?.prompt ?? "Describe qué muestra o qué ocurrió"} />
+              {selectedSuggestion && <p className="text-xs leading-5 text-slate-500">{selectedSuggestion.prompt}</p>}
             </div>
             <div className="space-y-2">
               <Label htmlFor="element-date">Fecha, si aplica</Label>
               <Input id="element-date" type="date" value={newElement.date} onChange={(event) => setNewElement((current) => ({ ...current, date: event.target.value }))} />
             </div>
             {newElement.type === "pruebas" && (
-              <button className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-5 text-sm font-medium text-slate-600 hover:border-slate-400">
-                <Upload className="size-4" /> Seleccionar archivo (demo)
-              </button>
+              <div className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-5 text-center text-sm text-slate-600">
+                <Upload className="size-4 shrink-0" /> Registra aquí la referencia; el archivo original no se carga ni se almacena.
+              </div>
             )}
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setAddOpen(false)}>Cancelar</Button>
-            <Button disabled={!newElement.title.trim()} onClick={addElement} className="bg-[#173f6b] text-white hover:bg-[#102f51]">
-              <Plus className="size-4" /> Agregar al expediente
+            <Button disabled={!newElement.title.trim() || !newElement.detail.trim()} onClick={addElement} className="bg-[#173f6b] text-white hover:bg-[#102f51]">
+              <Plus className="size-4" /> Agregar bloque
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1374,7 +2816,7 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
             <DialogDescription>Los campos entre corchetes requieren revisión. El documento no se radica automáticamente.</DialogDescription>
           </DialogHeader>
           <div className="my-2 max-h-[52vh] overflow-auto rounded-lg border border-slate-200 bg-[#fdfcf8] p-6 whitespace-pre-wrap font-serif text-sm leading-7 text-slate-700">
-            {draftText}
+            {exportedDraftText}
           </div>
           <div className="flex items-start gap-2 rounded-lg bg-amber-50 p-3 text-xs leading-5 text-amber-900">
             <AlertTriangle className="mt-0.5 size-4 shrink-0" />
@@ -1382,7 +2824,7 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDocumentOpen(false)}>Volver al expediente</Button>
-            <Button onClick={() => downloadText(draftFilename, draftText)} className="bg-[#173f6b] text-white hover:bg-[#102f51]">
+            <Button onClick={() => downloadText(exportedDraftFilename, exportedDraftText)} className="bg-[#173f6b] text-white hover:bg-[#102f51]">
               <Download className="size-4" /> Descargar borrador
             </Button>
           </DialogFooter>

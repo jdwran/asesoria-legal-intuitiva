@@ -16,6 +16,7 @@ import {
   Download,
   ExternalLink,
   FileCheck2,
+  Files,
   FileText,
   FolderOpen,
   Info,
@@ -32,8 +33,10 @@ import {
   Save,
   ShieldCheck,
   Sparkles,
+  Trash2,
   Upload,
   Users,
+  X,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -76,6 +79,20 @@ import {
 import type { CaseSessionSnapshot } from "@/lib/case-session";
 import { DETAILED_GUIDANCE_ACKNOWLEDGEMENT_VERSION } from "@/lib/detailed-guidance";
 import {
+  formatCaseFileSize,
+  parseStoredCaseFile,
+  type StoredCaseFile,
+} from "@/lib/case-file";
+import {
+  caseFileKey,
+  classifyCaseFile,
+  MAX_CASE_BATCH_SIZE_BYTES,
+  MAX_CASE_FILES_PER_BATCH,
+  MAX_CASE_FILE_SIZE_BYTES,
+  validateCaseFileBatch,
+  type CaseFileRejectionReason,
+} from "@/lib/case-file-classification";
+import {
   composeDraftExport,
   DRAFT_EXPORT_OPTIONS,
   getDraftExportFilename,
@@ -104,6 +121,13 @@ type AnalysisMode = "ready" | "demo" | "ai";
 type AccountState = "checking" | "anonymous" | "active" | "unavailable";
 type SaveState = "ready" | "saving" | "saved" | "error" | "conflict";
 type SavedAccount = { displayName: string };
+type PendingCaseFile = {
+  id: string;
+  file: File;
+  pieceType: CaseElementType;
+  status: "ready" | "uploading" | "uploaded" | "error";
+  error?: string;
+};
 type OrientationApiResponse = LegalOrientation & {
   mode?: "demo" | "ai";
   degraded?: boolean;
@@ -115,6 +139,8 @@ const ORIENTATION_REQUEST_TIMEOUT_MS = 90_000;
 const SESSION_SAVE_DEBOUNCE_MS = 800;
 const TUTELA_EXPORT_WARNING =
   "La tutela solo procede si no tienes otro medio de defensa o hay riesgo de un daño grave e inminente. Revisa este borrador con un abogado o un consultorio jurídico gratuito antes de radicarlo.";
+const CASE_FILE_STORAGE_CONSENT =
+  "Autorizo guardar estos archivos cifrados en mi sesión legal. Entiendo que no se enviarán al proveedor de IA y que puedo eliminarlos desde el expediente.";
 
 function AccountSessionStatus({
   account,
@@ -286,6 +312,41 @@ const typeLabels: Record<CaseElementType, string> = {
   documentos: "Documento",
 };
 
+const uploadTypeLabels: Record<CaseElementType, string> = {
+  ...typeLabels,
+  normas: "Norma o fuente (sin verificar)",
+};
+
+function caseElementTypeLabel(element: CaseElement) {
+  return element.attachment ? uploadTypeLabels[element.type] : typeLabels[element.type];
+}
+
+const caseFileRejectionMessages: Record<CaseFileRejectionReason, string> = {
+  "empty-file": "está vacío",
+  "file-too-large": "supera 10 MB",
+  "unsupported-type": "usa un formato no permitido",
+  "duplicate-file": "ya está en esta selección",
+  "batch-file-limit": "supera el máximo de 20 archivos",
+  "batch-size-limit": "haría que el lote supere 50 MB",
+};
+
+function elementFromStoredCaseFile(file: StoredCaseFile): CaseElement {
+  return {
+    id: `file-${file.id}`,
+    type: file.pieceType,
+    title: file.fileName,
+    detail: `Archivo original almacenado cifrado · ${formatCaseFileSize(file.sizeBytes)}`,
+    status: "listo",
+    attachment: {
+      id: file.id,
+      fileName: file.fileName,
+      mimeType: file.mimeType,
+      sizeBytes: file.sizeBytes,
+      uploadedAt: file.createdAt,
+    },
+  };
+}
+
 const urgencyStyles = {
   baja: "border-sky-200 bg-sky-50 text-sky-800",
   media: "border-amber-200 bg-amber-50 text-amber-800",
@@ -431,6 +492,14 @@ export function LegalWorkspace({ identityAvailable = false }: { identityAvailabl
   const [triageAnswers, setTriageAnswers] = useState<Record<number, string>>({});
   const [triageSaved, setTriageSaved] = useState(false);
   const [triageError, setTriageError] = useState("");
+  const [bulkUploadOpen, setBulkUploadOpen] = useState(false);
+  const [pendingCaseFiles, setPendingCaseFiles] = useState<PendingCaseFile[]>([]);
+  const [caseFileErrors, setCaseFileErrors] = useState<string[]>([]);
+  const [caseFileStorageConsent, setCaseFileStorageConsent] = useState(false);
+  const [isUploadingCaseFiles, setIsUploadingCaseFiles] = useState(false);
+  const [isPurgingCaseFiles, setIsPurgingCaseFiles] = useState(false);
+  const [busyCaseFileIds, setBusyCaseFileIds] = useState<string[]>([]);
+  const [caseFilesSyncAttempt, setCaseFilesSyncAttempt] = useState(0);
   const [newElement, setNewElement] = useState<{
     type: CaseElementType;
     title: string;
@@ -442,6 +511,8 @@ export function LegalWorkspace({ identityAvailable = false }: { identityAvailabl
   const [saveState, setSaveState] = useState<SaveState>("ready");
   const saveStateRef = useRef<SaveState>("ready");
   const accountEnabledRef = useRef(false);
+  const caseFileInputRef = useRef<HTMLInputElement>(null);
+  const caseFilesSyncedRef = useRef(false);
   const sessionRevisionRef = useRef(0);
   const saveInFlightRef = useRef(false);
   const pendingSnapshotRef = useRef<CaseSessionSnapshot | null>(null);
@@ -458,6 +529,7 @@ export function LegalWorkspace({ identityAvailable = false }: { identityAvailabl
     saveInFlightRef.current = false;
     pendingSnapshotRef.current = null;
     lastPersistedSnapshotRef.current = null;
+    caseFilesSyncedRef.current = false;
     setAccount(null);
     setAccountState("anonymous");
     updateSaveState("ready");
@@ -468,6 +540,14 @@ export function LegalWorkspace({ identityAvailable = false }: { identityAvailabl
     setNewCaseOpen(false);
     setCaseMenuOpen(false);
     setAddOpen(false);
+    setBulkUploadOpen(false);
+    setPendingCaseFiles([]);
+    setCaseFileErrors([]);
+    setCaseFileStorageConsent(false);
+    setIsUploadingCaseFiles(false);
+    setIsPurgingCaseFiles(false);
+    setBusyCaseFileIds([]);
+    setCaseFilesSyncAttempt(0);
     setSelectedSuggestion(null);
     setDocumentOpen(false);
     setStory("");
@@ -531,6 +611,10 @@ export function LegalWorkspace({ identityAvailable = false }: { identityAvailabl
   );
   const evidenceCount = useMemo(
     () => elements.filter((element) => element.type === "pruebas").length,
+    [elements],
+  );
+  const storedFileCount = useMemo(
+    () => elements.filter((element) => element.attachment).length,
     [elements],
   );
   const caseSuggestions = useMemo(
@@ -769,6 +853,66 @@ export function LegalWorkspace({ identityAvailable = false }: { identityAvailabl
   }, [identityAvailable, updateSaveState]);
 
   useEffect(() => {
+    if (
+      accountState !== "active" ||
+      !accountEnabledRef.current ||
+      !hasAnalyzedCase ||
+      caseFilesSyncedRef.current
+    ) {
+      return;
+    }
+    caseFilesSyncedRef.current = true;
+    const controller = new AbortController();
+    let retryTimeout: number | undefined;
+
+    async function syncStoredCaseFiles() {
+      try {
+        const response = await fetch("/api/case-files", {
+          cache: "no-store",
+          credentials: "same-origin",
+          signal: controller.signal,
+        });
+        if (!response.ok) throw new Error("case_files_unavailable");
+        const payload = (await response.json()) as { files?: unknown };
+        if (!Array.isArray(payload.files)) throw new Error("invalid_case_files");
+        const storedFiles = payload.files.map(parseStoredCaseFile);
+        setElements((current) => {
+          const currentAttachments = new Map(
+            current.flatMap((element) =>
+              element.attachment ? [[element.attachment.id, element] as const] : [],
+            ),
+          );
+          return [
+            ...current.filter((element) => !element.attachment),
+            ...storedFiles.map((file) => ({
+              ...elementFromStoredCaseFile(file),
+              id: currentAttachments.get(file.id)?.id ?? `file-${file.id}`,
+            })),
+          ];
+        });
+      } catch {
+        if (!controller.signal.aborted) {
+          caseFilesSyncedRef.current = false;
+          if (caseFilesSyncAttempt < 2) {
+            retryTimeout = window.setTimeout(
+              () => setCaseFilesSyncAttempt((attempt) => attempt + 1),
+              2_000,
+            );
+          } else {
+            setNotice("No pudimos sincronizar los documentos guardados · vuelve a intentarlo más tarde");
+          }
+        }
+      }
+    }
+
+    void syncStoredCaseFiles();
+    return () => {
+      controller.abort();
+      if (retryTimeout !== undefined) window.clearTimeout(retryTimeout);
+    };
+  }, [accountState, caseFilesSyncAttempt, hasAnalyzedCase]);
+
+  useEffect(() => {
     if (accountState !== "active" || !accountEnabledRef.current) return;
     if (
       sessionRevisionRef.current === 0 &&
@@ -864,7 +1008,7 @@ LO QUE SE HA INFORMADO
 ${orientation.extractedFacts.map((fact, index) => `${index + 1}. ${fact}`).join("\n")}
 
 PIEZAS DEL EXPEDIENTE
-${elements.map((element, index) => `${index + 1}. [${typeLabels[element.type]}] ${element.title}: ${element.detail}${element.sourceUrl ? `\n   Fuente: ${element.sourceUrl}` : ""}`).join("\n") || "Aún no se han agregado piezas."}
+${elements.map((element, index) => `${index + 1}. [${caseElementTypeLabel(element)}] ${element.title}: ${element.detail}${element.sourceUrl ? `\n   Fuente: ${element.sourceUrl}` : ""}`).join("\n") || "Aún no se han agregado piezas."}
 
 PREGUNTAS PARA QUIEN REVISE EL CASO
 ${orientation.triageQuestions.map((question, index) => `${index + 1}. ${question}`).join("\n") || "No se registraron preguntas pendientes."}
@@ -979,6 +1123,16 @@ Este es un borrador informativo. Revisa los datos y, si es posible, solicita ori
       setFormError(ORIENTATION_FORM_ERRORS.consent);
       return;
     }
+    if (
+      caseDialogMode === "new" &&
+      accountState === "active" &&
+      hasAnalyzedCase &&
+      !window.confirm(
+        "Crear un caso nuevo eliminará de forma permanente los documentos originales guardados del caso actual, si existen. ¿Quieres continuar?",
+      )
+    ) {
+      return;
+    }
     setStory(cleanStory);
     setFormError("");
     setIsAnalyzing(true);
@@ -986,6 +1140,9 @@ Este es un borrador informativo. Revisa los datos y, si es posible, solicita ori
 
     try {
       const result = await requestOrientation({ story: cleanStory, city: cleanCity, processingConsent: true });
+      if (caseDialogMode === "new" && accountState === "active") {
+        await purgeStoredCaseFiles(false);
+      }
       setOrientation(result);
       setSavedStory(cleanStory);
       setHasAnalyzedCase(true);
@@ -1132,6 +1289,281 @@ Este es un borrador informativo. Revisa los datos y, si es posible, solicita ori
     setAddOpen(true);
   }
 
+  function openBulkCaseFileUpload() {
+    setPendingCaseFiles([]);
+    setCaseFileErrors([]);
+    setCaseFileStorageConsent(false);
+    setBulkUploadOpen(true);
+  }
+
+  function selectCaseFiles(event: React.ChangeEvent<HTMLInputElement>) {
+    const selectedFiles = Array.from(event.target.files ?? []);
+    if (selectedFiles.length === 0) return;
+    const currentByKey = new Map(pendingCaseFiles.map((item) => [caseFileKey(item.file), item]));
+    const validation = validateCaseFileBatch([
+      ...pendingCaseFiles.map((item) => item.file),
+      ...selectedFiles,
+    ]);
+
+    setPendingCaseFiles(
+      validation.accepted.map((file) => {
+        const current = currentByKey.get(caseFileKey(file));
+        return current ?? {
+          id: crypto.randomUUID(),
+          file,
+          pieceType: classifyCaseFile(file),
+          status: "ready",
+        };
+      }),
+    );
+    setCaseFileErrors(
+      validation.rejected.map(
+        ({ file, reason }) => `${file.name}: ${caseFileRejectionMessages[reason]}.`,
+      ),
+    );
+    event.target.value = "";
+  }
+
+  function removePendingCaseFile(id: string) {
+    setPendingCaseFiles((current) => current.filter((item) => item.id !== id));
+    setCaseFileErrors([]);
+  }
+
+  function classifyPendingCaseFile(id: string, pieceType: CaseElementType) {
+    setPendingCaseFiles((current) =>
+      current.map((item) =>
+        item.id === id ? { ...item, pieceType, status: "ready", error: undefined } : item,
+      ),
+    );
+    setCaseFileErrors([]);
+  }
+
+  async function uploadPendingCaseFiles() {
+    if (accountState !== "active") {
+      setCaseFileErrors(["La carga de originales requiere una cuenta con guardado cifrado activo."]);
+      return;
+    }
+    if (!caseFileStorageConsent) {
+      setCaseFileErrors(["Autoriza el almacenamiento cifrado antes de continuar."]);
+      return;
+    }
+    if (pendingCaseFiles.length === 0 || isUploadingCaseFiles) return;
+
+    setIsUploadingCaseFiles(true);
+    setCaseFileErrors([]);
+    const queue = [...pendingCaseFiles];
+    const uploaded: StoredCaseFile[] = [];
+    const failures: string[] = [];
+    let cursor = 0;
+
+    async function worker() {
+      while (cursor < queue.length) {
+        const item = queue[cursor++];
+        setPendingCaseFiles((current) =>
+          current.map((candidate) =>
+            candidate.id === item.id
+              ? { ...candidate, status: "uploading", error: undefined }
+              : candidate,
+          ),
+        );
+        try {
+          const formData = new FormData();
+          formData.append("file", item.file, item.file.name);
+          formData.append("pieceType", item.pieceType);
+          formData.append("lastModified", String(item.file.lastModified));
+          formData.append("storageConsent", "true");
+          const response = await fetch("/api/case-files", {
+            method: "POST",
+            credentials: "same-origin",
+            body: formData,
+          });
+          const payload = (await response.json().catch(() => null)) as
+            | { file?: unknown; error?: unknown }
+            | null;
+          if (!response.ok) {
+            throw new Error(
+              typeof payload?.error === "string" ? payload.error : "No fue posible cargar el archivo.",
+            );
+          }
+          uploaded.push(parseStoredCaseFile(payload?.file));
+          setPendingCaseFiles((current) =>
+            current.map((candidate) =>
+              candidate.id === item.id ? { ...candidate, status: "uploaded" } : candidate,
+            ),
+          );
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "No fue posible cargar el archivo.";
+          failures.push(`${item.file.name}: ${message}`);
+          setPendingCaseFiles((current) =>
+            current.map((candidate) =>
+              candidate.id === item.id
+                ? { ...candidate, status: "error", error: message }
+                : candidate,
+            ),
+          );
+        }
+      }
+    }
+
+    await Promise.all(Array.from({ length: Math.min(3, queue.length) }, () => worker()));
+
+    if (uploaded.length > 0) {
+      const uploadedIds = new Set(uploaded.map((file) => file.id));
+      setElements((current) => [
+        ...current.filter((element) => !element.attachment || !uploadedIds.has(element.attachment.id)),
+        ...uploaded.map(elementFromStoredCaseFile),
+      ]);
+      setPendingCaseFiles((current) =>
+        current.filter((item) =>
+          !uploaded.some(
+            (file) =>
+              file.fileName === item.file.name &&
+              file.sizeBytes === item.file.size &&
+              file.lastModified === item.file.lastModified,
+          ),
+        ),
+      );
+      setActiveSection("expediente");
+    }
+    setCaseFileErrors(failures);
+    setIsUploadingCaseFiles(false);
+
+    if (failures.length === 0) {
+      setPendingCaseFiles([]);
+      setCaseFileStorageConsent(false);
+      setBulkUploadOpen(false);
+      setNotice(
+        `${uploaded.length} ${uploaded.length === 1 ? "documento cargado y clasificado" : "documentos cargados y clasificados"}`,
+      );
+    } else {
+      setNotice(
+        `${uploaded.length} ${uploaded.length === 1 ? "documento cargado" : "documentos cargados"} · revisa los que fallaron`,
+      );
+    }
+  }
+
+  async function downloadStoredCaseFile(element: CaseElement) {
+    const attachment = element.attachment;
+    const fileId = attachment?.id;
+    if (!fileId || busyCaseFileIds.includes(fileId)) return;
+    setBusyCaseFileIds((current) => [...current, fileId]);
+    try {
+      const response = await fetch(`/api/case-files/${encodeURIComponent(fileId)}/download`, {
+        cache: "no-store",
+        credentials: "same-origin",
+      });
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as { error?: unknown } | null;
+        throw new Error(
+          typeof payload?.error === "string" ? payload.error : "No fue posible descargar el documento.",
+        );
+      }
+      const href = URL.createObjectURL(await response.blob());
+      const anchor = document.createElement("a");
+      anchor.href = href;
+      anchor.download = attachment.fileName;
+      anchor.click();
+      URL.revokeObjectURL(href);
+      setNotice(`${attachment.fileName} descargado`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "No fue posible descargar el documento");
+    } finally {
+      setBusyCaseFileIds((current) => current.filter((id) => id !== fileId));
+    }
+  }
+
+  async function reclassifyStoredCaseFile(element: CaseElement, pieceType: CaseElementType) {
+    const fileId = element.attachment?.id;
+    if (!fileId || pieceType === element.type || busyCaseFileIds.includes(fileId)) return;
+    setBusyCaseFileIds((current) => [...current, fileId]);
+    try {
+      const response = await fetch(`/api/case-files/${encodeURIComponent(fileId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ pieceType }),
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | { file?: unknown; error?: unknown }
+        | null;
+      if (!response.ok) {
+        throw new Error(
+          typeof payload?.error === "string" ? payload.error : "No fue posible reclasificar.",
+        );
+      }
+      const stored = parseStoredCaseFile(payload?.file);
+      setElements((current) =>
+        current.map((candidate) =>
+          candidate.attachment?.id === fileId
+            ? { ...elementFromStoredCaseFile(stored), id: candidate.id }
+            : candidate,
+        ),
+      );
+      setNotice(`${stored.fileName} ahora está en ${typeLabels[stored.pieceType].toLowerCase()}`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "No fue posible reclasificar el documento");
+    } finally {
+      setBusyCaseFileIds((current) => current.filter((id) => id !== fileId));
+    }
+  }
+
+  async function deleteStoredCaseFile(element: CaseElement) {
+    const attachment = element.attachment;
+    const fileId = attachment?.id;
+    if (!fileId || busyCaseFileIds.includes(fileId)) return;
+    if (!window.confirm(`¿Eliminar de forma permanente “${attachment.fileName}”?`)) return;
+    setBusyCaseFileIds((current) => [...current, fileId]);
+    try {
+      const response = await fetch(`/api/case-files/${encodeURIComponent(fileId)}`, {
+        method: "DELETE",
+        credentials: "same-origin",
+      });
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as { error?: unknown } | null;
+        throw new Error(
+          typeof payload?.error === "string" ? payload.error : "No fue posible eliminar el documento.",
+        );
+      }
+      setElements((current) => current.filter((candidate) => candidate.attachment?.id !== fileId));
+      setNotice("Documento eliminado de forma permanente");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "No fue posible eliminar el documento");
+    } finally {
+      setBusyCaseFileIds((current) => current.filter((id) => id !== fileId));
+    }
+  }
+
+  async function purgeStoredCaseFiles(confirmDeletion: boolean) {
+    if (accountState !== "active") return true;
+    if (isPurgingCaseFiles) return false;
+    if (
+      confirmDeletion &&
+      !window.confirm("¿Eliminar de forma permanente todos los documentos originales de este expediente?")
+    ) {
+      return false;
+    }
+    setIsPurgingCaseFiles(true);
+    try {
+      const response = await fetch("/api/case-files", {
+        method: "DELETE",
+        credentials: "same-origin",
+      });
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as { error?: unknown } | null;
+        throw new Error(
+          typeof payload?.error === "string"
+            ? payload.error
+            : "No fue posible eliminar los documentos guardados.",
+        );
+      }
+      setElements((current) => current.filter((element) => !element.attachment));
+      caseFilesSyncedRef.current = true;
+      return true;
+    } finally {
+      setIsPurgingCaseFiles(false);
+    }
+  }
+
   function goToNextAction() {
     if (needsTriage) {
       triageSectionRef.current?.focus({ preventScroll: true });
@@ -1224,7 +1656,7 @@ LO QUE ENTENDIMOS
 ${orientation.plainSummary}
 
 PIEZAS DEL EXPEDIENTE
-${elements.map((element, index) => `${index + 1}. [${typeLabels[element.type]}] ${element.title}\n   ${element.detail}${element.sourceUrl ? `\n   Fuente: ${element.sourceUrl}` : ""}`).join("\n")}
+${elements.map((element, index) => `${index + 1}. [${caseElementTypeLabel(element)}] ${element.title}\n   ${element.detail}${element.sourceUrl ? `\n   Fuente: ${element.sourceUrl}` : ""}`).join("\n")}
 
 RUTA SUGERIDA
 ${procedureSteps.map((step, index) => `${index + 1}. ${step.title}\n   ${step.detail}\n   Entidad: ${step.entity}\n   Canal: ${step.channel}\n   Requisitos: ${step.requirements.join("; ")}\n   Resultado esperado: ${step.expectedOutput}\n   Siguiente: ${step.nextAction}`).join("\n")}
@@ -1755,16 +2187,44 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
                 <section className="flex flex-col gap-4 rounded-2xl border border-slate-200 bg-white p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6">
                   <div>
                     <p className="text-sm font-semibold text-slate-900">Un expediente que se adapta a tu caso</p>
-                    <p className="mt-1 text-sm leading-6 text-slate-500">Agrega bloques sugeridos o crea uno propio. Tú decides qué incorporar y qué confirmar.</p>
+                    <p className="mt-1 text-sm leading-6 text-slate-500">Agrega bloques sugeridos, carga varios documentos o crea una pieza propia. Tú decides qué incorporar y cómo clasificarlo.</p>
                     <div className="mt-3 flex items-center gap-3 text-xs text-slate-500">
                       <span>{elements.length} bloques</span>
                       <span aria-hidden="true">·</span>
                       <span>{completeness}% de tipos cubiertos</span>
                     </div>
                   </div>
-                  <Button onClick={openCustomBlock} className="bg-[#173f6b] text-white hover:bg-[#102f51]">
-                    <Plus className="size-4" /> Crear bloque propio
-                  </Button>
+                  <div className="flex flex-wrap gap-2">
+                    {storedFileCount > 0 && accountState === "active" && (
+                      <Button
+                        variant="ghost"
+                        disabled={isPurgingCaseFiles}
+                        onClick={() => {
+                          void purgeStoredCaseFiles(true)
+                            .then((deleted) => {
+                              if (deleted) setNotice("Todos los documentos originales fueron eliminados");
+                            })
+                            .catch((error) =>
+                              setNotice(
+                                error instanceof Error
+                                  ? error.message
+                                  : "No fue posible eliminar los documentos",
+                              ),
+                            );
+                        }}
+                        className="text-rose-700 hover:bg-rose-50 hover:text-rose-800"
+                      >
+                        {isPurgingCaseFiles ? <LoaderCircle className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
+                        {isPurgingCaseFiles ? "Eliminando…" : "Eliminar documentos"}
+                      </Button>
+                    )}
+                    <Button variant="outline" onClick={openBulkCaseFileUpload} className="text-[#173f6b]">
+                      <Files className="size-4" /> Cargar documentos
+                    </Button>
+                    <Button onClick={openCustomBlock} className="bg-[#173f6b] text-white hover:bg-[#102f51]">
+                      <Plus className="size-4" /> Crear bloque propio
+                    </Button>
+                  </div>
                 </section>
 
                 {caseSuggestions.length > 0 && (
@@ -1809,16 +2269,69 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
                             <div className="flex flex-wrap items-center justify-between gap-2">
                               <h3 className="font-semibold text-slate-900">{element.title}</h3>
                               <Badge variant="outline" className={`rounded-md text-[10px] ${element.status === "listo" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"}`}>
-                                {element.status === "listo" ? "Confirmado" : "Por confirmar"}
+                                {element.attachment
+                                  ? "Archivo cargado"
+                                  : element.status === "listo"
+                                    ? "Confirmado"
+                                    : "Por confirmar"}
                               </Badge>
                             </div>
                             <p className="mt-2 text-sm leading-6 text-slate-600">{element.detail}</p>
-                            <p className="mt-3 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400">{typeLabels[element.type]}</p>
+                            <p className="mt-3 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400">
+                              {caseElementTypeLabel(element)}
+                            </p>
                             {element.date && <p className="mt-2 text-xs font-medium text-slate-500">Fecha: {element.date}</p>}
                             {element.sourceUrl && (
                               <a href={element.sourceUrl} target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-1.5 text-sm font-semibold text-[#173f6b] hover:underline">
                                 Abrir fuente guardada <ExternalLink className="size-3.5" />
                               </a>
+                            )}
+                            {element.attachment && (
+                              <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                                <Label htmlFor={`stored-file-type-${element.attachment.id}`} className="text-xs font-semibold text-slate-700">
+                                  Clasificación de esta pieza
+                                </Label>
+                                <select
+                                  id={`stored-file-type-${element.attachment.id}`}
+                                  aria-label={`Clasificación de ${element.attachment.fileName}`}
+                                  value={element.type}
+                                  disabled={busyCaseFileIds.includes(element.attachment.id)}
+                                  onChange={(event) =>
+                                    void reclassifyStoredCaseFile(
+                                      element,
+                                      event.target.value as CaseElementType,
+                                    )
+                                  }
+                                  className="mt-2 flex h-9 w-full rounded-md border border-input bg-white px-3 py-1 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-60"
+                                >
+                                  {Object.entries(uploadTypeLabels).map(([value, label]) => (
+                                    <option key={value} value={value}>{label}</option>
+                                  ))}
+                                </select>
+                                <p className="mt-2 text-[11px] leading-4 text-slate-500">
+                                  Esta clasificación solo organiza el expediente; no verifica el contenido ni la autenticidad del archivo.
+                                </p>
+                                <div className="mt-3 flex flex-wrap gap-3">
+                                  <button
+                                    type="button"
+                                    disabled={busyCaseFileIds.includes(element.attachment.id)}
+                                    aria-label={`Descargar original ${element.attachment.fileName}`}
+                                    onClick={() => void downloadStoredCaseFile(element)}
+                                    className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#173f6b] hover:underline disabled:opacity-50"
+                                  >
+                                    <Download className="size-3.5" /> Descargar original
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={busyCaseFileIds.includes(element.attachment.id)}
+                                    aria-label={`Eliminar original ${element.attachment.fileName}`}
+                                    onClick={() => void deleteStoredCaseFile(element)}
+                                    className="inline-flex items-center gap-1.5 text-xs font-semibold text-rose-700 hover:underline disabled:opacity-50"
+                                  >
+                                    <Trash2 className="size-3.5" /> Eliminar original
+                                  </button>
+                                </div>
+                              </div>
                             )}
                             {element.status !== "listo" && (
                               <Button variant="outline" size="sm" className="mt-4" onClick={() => confirmElement(element.id)}>
@@ -2002,7 +2515,7 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
             <DialogDescription className="text-sm leading-6">
               {caseDialogMode === "new"
                 ? hasAnalyzedCase
-                  ? "La aplicación mantiene un expediente activo. Al organizar el nuevo relato reemplazarás el caso actual; descarga su carpeta antes si necesitas conservarlo."
+                  ? "La aplicación mantiene un expediente activo. Al organizar el nuevo relato reemplazarás el caso actual y se eliminarán sus originales guardados; descarga primero la carpeta y cada archivo que necesites conservar."
                   : "Cuéntanos tu situación en palabras sencillas. La IA organizará los hechos y propondrá una ruta inicial para que la verifiques."
                 : "Escríbelo como se lo contarías a alguien de confianza. No necesitas usar palabras legales: organizaremos la información contigo."}
             </DialogDescription>
@@ -2049,6 +2562,190 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
             <Button disabled={!isOrientationFormReady({ story, city, processingConsent }) || isAnalyzing} onClick={() => void analyzeCase()} className="bg-[#173f6b] text-white hover:bg-[#102f51]">
               {isAnalyzing ? <LoaderCircle className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
               {isAnalyzing ? "Organizando tu relato…" : "Ver respuesta preliminar"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={bulkUploadOpen}
+        onOpenChange={(open) => {
+          if (isUploadingCaseFiles) return;
+          setBulkUploadOpen(open);
+          if (!open) {
+            setPendingCaseFiles([]);
+            setCaseFileErrors([]);
+            setCaseFileStorageConsent(false);
+          }
+        }}
+      >
+        <DialogContent
+          showCloseButton={!isUploadingCaseFiles}
+          className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-3xl"
+        >
+          <DialogHeader>
+            <div className="mb-2 grid size-10 place-items-center rounded-xl bg-sky-50 text-sky-700">
+              <Files className="size-5" />
+            </div>
+            <DialogTitle className="font-serif text-2xl text-[#102238]">Carga y clasifica varios documentos</DialogTitle>
+            <DialogDescription className="leading-6">
+              Selecciona hasta {MAX_CASE_FILES_PER_BATCH} archivos. Sugerimos una categoría usando solo el nombre y el formato; puedes corregirla antes o después de cargarlos.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            {accountState === "active" ? (
+              <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4">
+                <Label htmlFor="case-files" className="font-semibold text-slate-900">Seleccionar documentos</Label>
+                <Input
+                  ref={caseFileInputRef}
+                  id="case-files"
+                  type="file"
+                  multiple
+                  accept=".pdf,.docx,.txt,.jpg,.jpeg,.png,.webp"
+                  disabled={isUploadingCaseFiles}
+                  onChange={selectCaseFiles}
+                  className="mt-3 cursor-pointer bg-white file:cursor-pointer"
+                />
+                <p className="mt-2 text-xs leading-5 text-slate-500">
+                  PDF, DOCX, TXT, JPG, PNG o WEBP · máximo {formatCaseFileSize(MAX_CASE_FILE_SIZE_BYTES)} por archivo y {formatCaseFileSize(MAX_CASE_BATCH_SIZE_BYTES)} por selección.
+                </p>
+              </div>
+            ) : (
+              <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-950">
+                <ShieldCheck className="mt-1 size-4 shrink-0" />
+                <div>
+                  <p>La carga de originales requiere una cuenta con guardado cifrado activo. Puedes seguir creando bloques manuales sin cargar archivos.</p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="mt-3 border-amber-300 bg-white text-amber-950"
+                    onClick={() => {
+                      setBulkUploadOpen(false);
+                      openCustomBlock();
+                    }}
+                  >
+                    Crear referencia manual
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {pendingCaseFiles.length > 0 && (
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-sm font-semibold text-slate-900">
+                    {pendingCaseFiles.length} {pendingCaseFiles.length === 1 ? "archivo seleccionado" : "archivos seleccionados"}
+                  </p>
+                  <p aria-live="polite" className="text-xs text-slate-500">
+                    {isUploadingCaseFiles || pendingCaseFiles.some((item) => item.status !== "ready")
+                      ? `${pendingCaseFiles.filter((item) => item.status === "uploaded" || item.status === "error").length} de ${pendingCaseFiles.length} procesados`
+                      : "Listos para clasificar y cargar"}
+                  </p>
+                </div>
+                {isUploadingCaseFiles && (
+                  <Progress
+                    value={
+                      (pendingCaseFiles.filter((item) => item.status === "uploaded" || item.status === "error").length /
+                        pendingCaseFiles.length) * 100
+                    }
+                  />
+                )}
+                <div className="max-h-[42vh] space-y-2 overflow-y-auto pr-1">
+                  {pendingCaseFiles.map((item) => (
+                    <div key={item.id} className="rounded-xl border border-slate-200 bg-white p-3">
+                      <div className="flex items-start gap-3">
+                        <FileText className="mt-1 size-4 shrink-0 text-slate-500" />
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-semibold text-slate-900" title={item.file.name}>{item.file.name}</p>
+                          <p className="mt-0.5 text-xs text-slate-500">
+                            {formatCaseFileSize(item.file.size)}
+                            {item.status === "uploading" ? " · Cargando y guardando de forma cifrada…" : ""}
+                            {item.status === "uploaded" ? " · Cargado" : ""}
+                            {item.status === "error" ? " · Requiere revisión" : ""}
+                          </p>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          disabled={isUploadingCaseFiles}
+                          aria-label={`Quitar ${item.file.name}`}
+                          onClick={() => removePendingCaseFile(item.id)}
+                          className="size-8 shrink-0 text-slate-500 hover:text-rose-700"
+                        >
+                          <X className="size-4" />
+                        </Button>
+                      </div>
+                      <div className="mt-3">
+                        <Label htmlFor={`pending-file-type-${item.id}`} className="text-xs font-semibold text-slate-700">
+                          Tipo de pieza
+                        </Label>
+                        <select
+                          id={`pending-file-type-${item.id}`}
+                          aria-label={`Tipo de pieza para ${item.file.name}`}
+                          value={item.pieceType}
+                          disabled={isUploadingCaseFiles}
+                          onChange={(event) => classifyPendingCaseFile(item.id, event.target.value as CaseElementType)}
+                          className="mt-1.5 flex h-9 w-full rounded-md border border-input bg-white px-3 py-1 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-60"
+                        >
+                          {Object.entries(uploadTypeLabels).map(([value, label]) => (
+                            <option key={value} value={value}>{label}</option>
+                          ))}
+                        </select>
+                      </div>
+                      {item.error && <p className="mt-2 text-xs text-rose-700">{item.error}</p>}
+                    </div>
+                  ))}
+                </div>
+                <p className="text-xs leading-5 text-slate-500">
+                  La clasificación es organizativa y no verifica la autenticidad. El contenido de los archivos no se envía al análisis de IA.
+                </p>
+              </div>
+            )}
+
+            {accountState === "active" && pendingCaseFiles.length > 0 && (
+              <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <input
+                  type="checkbox"
+                  checked={caseFileStorageConsent}
+                  disabled={isUploadingCaseFiles}
+                  onChange={(event) => setCaseFileStorageConsent(event.target.checked)}
+                  className="mt-0.5 size-4 accent-[#173f6b]"
+                />
+                <span className="text-xs leading-5 text-slate-600">{CASE_FILE_STORAGE_CONSENT}</span>
+              </label>
+            )}
+
+            {caseFileErrors.length > 0 && (
+              <div role="alert" className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs leading-5 text-rose-800">
+                <p className="font-semibold">Revisa estos archivos:</p>
+                <ul className="mt-1 list-disc space-y-1 pl-5">
+                  {caseFileErrors.map((error, index) => <li key={`${index}-${error}`}>{error}</li>)}
+                </ul>
+              </div>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button variant="ghost" disabled={isUploadingCaseFiles} onClick={() => setBulkUploadOpen(false)}>Cancelar</Button>
+            <Button
+              disabled={
+                accountState !== "active" ||
+                pendingCaseFiles.length === 0 ||
+                !caseFileStorageConsent ||
+                isUploadingCaseFiles
+              }
+              onClick={() => void uploadPendingCaseFiles()}
+              className="bg-[#173f6b] text-white hover:bg-[#102f51]"
+            >
+              {isUploadingCaseFiles ? <LoaderCircle className="size-4 animate-spin" /> : <Upload className="size-4" />}
+              {isUploadingCaseFiles
+                ? "Cargando documentos…"
+                : pendingCaseFiles.length === 0
+                  ? "Selecciona archivos"
+                  : `Cargar ${pendingCaseFiles.length} ${pendingCaseFiles.length === 1 ? "pieza" : "piezas"}`}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -35,6 +35,13 @@ export interface CaseElement {
   status?: "listo" | "pendiente";
   sourceId?: string;
   sourceUrl?: string;
+  attachment?: {
+    id: string;
+    fileName: string;
+    mimeType: string;
+    sizeBytes: number;
+    uploadedAt: string;
+  };
 }
 
 export interface OfficialSource {

@@ -43,6 +43,16 @@ const caseElementSchema: z.ZodType<CaseElement> = z
     status: z.enum(["listo", "pendiente"]).optional(),
     sourceId: z.string().max(160).optional(),
     sourceUrl: z.string().url().max(2_048).optional(),
+    attachment: z
+      .object({
+        id: z.string().uuid(),
+        fileName: z.string().min(1).max(255),
+        mimeType: z.string().min(1).max(160),
+        sizeBytes: z.number().int().min(1).max(10 * 1024 * 1024),
+        uploadedAt: z.iso.datetime(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 

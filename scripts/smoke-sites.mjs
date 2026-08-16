@@ -92,6 +92,11 @@ try {
   const anonymousSessionResponse = await fetch(`${origin}/api/session`);
   assert.equal(anonymousSessionResponse.status, 401);
 
+  const anonymousCaseFilesResponse = await fetch(`${origin}/api/case-files`);
+  assert.equal(anonymousCaseFilesResponse.status, 403);
+  assert.match(anonymousCaseFilesResponse.headers.get("cache-control") ?? "", /no-store/);
+  assert.equal(anonymousCaseFilesResponse.headers.get("x-content-type-options"), "nosniff");
+
   const ungatedAccountResponse = await fetch(`${origin}/api/account`, {
     method: "POST",
     headers: {

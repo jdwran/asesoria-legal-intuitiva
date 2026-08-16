@@ -39,7 +39,7 @@ const nextConfig: NextConfig = {
           { key: "Referrer-Policy", value: "no-referrer" },
         ],
       },
-      ...["/api/account", "/api/session"].map((source) => ({
+      ...["/api/account", "/api/session", "/api/case-files/:path*"].map((source) => ({
         source,
         headers: [
           { key: "Cache-Control", value: "no-store, max-age=0" },

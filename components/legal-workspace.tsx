@@ -77,6 +77,7 @@ import {
 
 type NavKey = "resumen" | CaseElementType | "ruta";
 type AnalysisProvider = "demo" | "open" | "openai";
+type AnalysisMode = "ready" | "demo" | "ai";
 type OrientationApiResponse = LegalOrientation & {
   mode?: "demo" | "ai";
   degraded?: boolean;
@@ -307,11 +308,12 @@ export function LegalWorkspace() {
   const [processingConsent, setProcessingConsent] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isRefining, setIsRefining] = useState(false);
-  const [analysisMode, setAnalysisMode] = useState<"demo" | "ai">("demo");
-  const [analysisProvider, setAnalysisProvider] = useState<AnalysisProvider>("demo");
+  const [analysisMode, setAnalysisMode] = useState<AnalysisMode>("ready");
+  const [analysisProvider, setAnalysisProvider] = useState<AnalysisProvider | null>(null);
+  const [hasAnalyzedCase, setHasAnalyzedCase] = useState(false);
   const [analysisFallbackUsed, setAnalysisFallbackUsed] = useState(false);
   const [analysisDegraded, setAnalysisDegraded] = useState(false);
-  const [notice, setNotice] = useState("Expediente guardado");
+  const [notice, setNotice] = useState("IA lista para organizar tu caso");
   const [formError, setFormError] = useState("");
   const [triageAnswers, setTriageAnswers] = useState<Record<number, string>>({});
   const [triageSaved, setTriageSaved] = useState(false);
@@ -495,6 +497,7 @@ Este es un borrador informativo. Revisa los datos y, si es posible, solicita ori
       const result = await requestOrientation({ story: cleanStory, city: cleanCity, processingConsent: true });
       setOrientation(result);
       setSavedStory(cleanStory);
+      setHasAnalyzedCase(true);
       setAnalysisMode(result.mode === "ai" ? "ai" : "demo");
       setAnalysisProvider(result.provider ?? (result.mode === "ai" ? "openai" : "demo"));
       setAnalysisFallbackUsed(Boolean(result.fallbackUsed));
@@ -757,8 +760,8 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
           </Button>
           <Button onClick={() => openCaseDialog("new")} className="bg-[#173f6b] text-white hover:bg-[#102f51]">
             <Pencil className="size-4" />
-            <span className="hidden sm:inline">Reemplazar caso</span>
-            <span className="sm:hidden">Reemplazar</span>
+            <span className="hidden sm:inline">{hasAnalyzedCase ? "Reemplazar caso" : "Crear mi caso"}</span>
+            <span className="sm:hidden">{hasAnalyzedCase ? "Reemplazar" : "Crear caso"}</span>
           </Button>
           <div className="ml-1 grid size-8 place-items-center rounded-full bg-amber-100 text-xs font-bold text-amber-900">LM</div>
         </div>
@@ -799,8 +802,10 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
                     </span>
                     <span className="flex items-center gap-1.5">
                       <Sparkles className="size-3.5 text-violet-500" />
-                      {analysisMode === "demo"
-                        ? "Modo demostración"
+                      {analysisMode === "ready"
+                        ? "Listo para analizar con IA"
+                        : analysisMode === "demo"
+                          ? "Modo demostración"
                         : analysisProvider === "open"
                           ? "Organizado con IA abierta"
                           : analysisFallbackUsed
@@ -1339,11 +1344,17 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
               <Sparkles className="size-5" />
             </div>
             <DialogTitle className="font-serif text-2xl text-[#102238]">
-              {caseDialogMode === "new" ? "Reemplaza el caso actual" : "Edita tu relato"}
+              {caseDialogMode === "new"
+                ? hasAnalyzedCase
+                  ? "Reemplaza el caso actual"
+                  : "Organiza tu caso con IA"
+                : "Edita tu relato"}
             </DialogTitle>
             <DialogDescription className="text-sm leading-6">
               {caseDialogMode === "new"
-                ? "Este MVP mantiene un solo expediente. Al organizar el nuevo relato reemplazarás el caso actual; descarga su carpeta antes si necesitas conservarlo."
+                ? hasAnalyzedCase
+                  ? "La aplicación mantiene un expediente activo. Al organizar el nuevo relato reemplazarás el caso actual; descarga su carpeta antes si necesitas conservarlo."
+                  : "Cuéntanos tu situación en palabras sencillas. La IA organizará los hechos y propondrá una ruta inicial para que la verifiques."
                 : "Escríbelo como se lo contarías a alguien de confianza. No necesitas usar palabras legales: organizaremos la información contigo."}
             </DialogDescription>
           </DialogHeader>
@@ -1361,7 +1372,7 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
                 placeholder="Ejemplo: trabajo en un restaurante y no me pagan hace dos meses…"
                 className="resize-none text-[15px] leading-6"
               />
-              <p className="text-xs text-slate-500">Esta es una demo pública: usa datos ficticios y no incluyas nombres, documentos de identidad, direcciones, contraseñas ni datos bancarios.</p>
+              <p className="text-xs text-slate-500">Al enviar, consultaremos el proveedor de IA configurado. Incluye solo los datos necesarios y evita documentos de identidad, direcciones, contraseñas o datos bancarios.</p>
             </div>
             <div className="space-y-2">
               <Label htmlFor="city">Municipio o ciudad</Label>
@@ -1425,9 +1436,9 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
               <Input id="element-date" type="date" value={newElement.date} onChange={(event) => setNewElement((current) => ({ ...current, date: event.target.value }))} />
             </div>
             {newElement.type === "pruebas" && (
-              <button className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-5 text-sm font-medium text-slate-600 hover:border-slate-400">
-                <Upload className="size-4" /> Seleccionar archivo (demo)
-              </button>
+              <div className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-5 text-center text-sm text-slate-600">
+                <Upload className="size-4 shrink-0" /> Registra aquí la referencia; el archivo original no se carga ni se almacena.
+              </div>
             )}
           </div>
           <DialogFooter>

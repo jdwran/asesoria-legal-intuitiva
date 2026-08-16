@@ -291,8 +291,15 @@ export async function POST(request: Request) {
   }
 
   const fallback = buildFallbackOrientation(body.story, body.city);
+  const requireAiProvider = process.env.AI_REQUIRE_PROVIDER === "1";
 
   if (process.env.AI_OFFLINE === "1") {
+    if (requireAiProvider) {
+      return json(
+        { error: "El servicio de IA está deshabilitado por configuración. Intenta nuevamente más tarde." },
+        503,
+      );
+    }
     return json({ ...fallback, mode: "demo", provider: "demo" });
   }
 
@@ -398,12 +405,24 @@ ${JSON.stringify(sourceCatalog)}`;
   }
 
   if (attempts.length === 0) {
+    if (requireAiProvider) {
+      return json(
+        { error: "El servicio de IA no está disponible en este momento. Intenta nuevamente en unos minutos." },
+        503,
+      );
+    }
     return json({ ...fallback, mode: "demo", provider: "demo" });
   }
 
   try {
     const selected = await runAiProviderChain(attempts, logProviderFailure, request.signal);
     if (!selected) {
+      if (requireAiProvider) {
+        return json(
+          { error: "No fue posible completar el análisis con IA. Intenta nuevamente en unos minutos." },
+          503,
+        );
+      }
       return json({ ...fallback, mode: "demo", provider: "demo", degraded: true });
     }
 

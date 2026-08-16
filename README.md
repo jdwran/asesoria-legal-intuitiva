@@ -73,6 +73,8 @@ Abre `http://localhost:3000`.
 
 Las claves son opcionales. Sin ellas, el producto conserva el recorrido completo con respuestas deterministas de demostración. Si ambos proveedores están configurados, siempre intenta primero el modelo abierto y solo consume OpenAI cuando el primario falla o supera su tiempo límite.
 
+En producción configura `AI_REQUIRE_PROVIDER=1` para devolver un error temporal cuando todos los proveedores estén indisponibles, en lugar de presentar una clasificación de demostración. `AI_OFFLINE=1` queda reservado para pruebas locales y CI.
+
 ```env
 # Ejemplo gratuito alojado: crea una clave en Cerebras Inference Cloud.
 PRIMARY_AI_BASE_URL=https://api.cerebras.ai/v1

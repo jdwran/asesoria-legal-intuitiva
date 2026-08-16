@@ -234,6 +234,18 @@ const suggestionsByCategory: Record<LegalCategory, CaseBlockSuggestion[]> = {
   ],
 };
 
+const categoryByDocumentKind: Record<DocumentKind, LegalCategory> = {
+  "arrendamiento-comunicacion": "arrendamiento",
+  "reclamacion-laboral": "laboral",
+  "solicitud-salud": "salud",
+  "medida-proteccion": "familia",
+  "resumen-familia": "familia",
+  "relato-denuncia": "penal",
+  "solicitud-administrativa": "administrativo",
+  "resumen-urgente": "otro",
+  "resumen-general": "otro",
+};
+
 function normalize(value: string) {
   return value
     .normalize("NFD")
@@ -243,12 +255,173 @@ function normalize(value: string) {
     .trim();
 }
 
+function contextualSuggestions(orientation: LegalOrientation): CaseBlockSuggestion[] {
+  const context = normalize(
+    [orientation.caseTitle, orientation.plainSummary, ...orientation.extractedFacts].join(" "),
+  );
+
+  if (orientation.documentKind === "resumen-urgente") {
+    return [
+      {
+        id: "judicial-notice-complete",
+        type: "pruebas",
+        title: "Notificación, demanda y anexos completos",
+        prompt: "Agrega el documento principal, todos los anexos, el sobre, mensaje o constancia de entrega.",
+        reason: "La revisión depende del contenido íntegro y del modo en que recibiste la actuación.",
+        priority: 130,
+      },
+      {
+        id: "judicial-received-at",
+        type: "fechas",
+        title: "Fecha, hora y medio de recepción",
+        prompt: "Registra exactamente cuándo y cómo llegó el documento, sin calcular por tu cuenta el vencimiento.",
+        reason: "Permite que una persona experta verifique el término aplicable.",
+        priority: 128,
+      },
+      {
+        id: "judicial-court-case",
+        type: "hechos",
+        title: "Juzgado, radicado y actuación indicada",
+        prompt: "Copia el despacho, radicado, tipo de actuación y el término tal como aparecen escritos.",
+        reason: "Evita confundir la consulta del proceso con una respuesta o contestación.",
+        priority: 126,
+      },
+    ];
+  }
+
+  if (orientation.documentKind === "medida-proteccion") {
+    return [
+      {
+        id: "protection-current-safety",
+        type: "hechos",
+        title: "Seguridad y riesgo en este momento",
+        prompt: "Indica si estás en un lugar seguro, si la persona está cerca y qué apoyo humano puedes activar ahora.",
+        reason: "La protección inmediata va antes que completar documentos o contactar a la otra persona.",
+        priority: 130,
+      },
+      {
+        id: "protection-access-home",
+        type: "hechos",
+        title: "Acceso a la vivienda, llaves y personas en riesgo",
+        prompt: "Registra si conserva llaves o acceso y si hay niñas, niños u otras personas expuestas.",
+        reason: "Ayuda a pedir medidas concretas sin exponerte a recolectar más pruebas.",
+        priority: 126,
+      },
+      {
+        id: "protection-existing-evidence",
+        type: "pruebas",
+        title: "Soportes que ya tienes disponibles",
+        prompt: "Lista mensajes, fotos, reportes médicos o testigos que ya existan; no te pongas en riesgo para obtener otros.",
+        reason: "Organiza lo disponible sin convertir la evidencia en requisito para pedir protección.",
+        priority: 122,
+      },
+    ];
+  }
+
+  if (orientation.sourceIds.includes("icbf-linea-141")) {
+    return [
+      {
+        id: "child-current-access",
+        type: "hechos",
+        title: "Seguridad y acceso actual a la niña o niño",
+        prompt: "Indica si la persona señalada todavía puede acercarse y qué adulto seguro acompaña al menor.",
+        reason: "Permite priorizar protección sin pedir que repita el relato.",
+        priority: 132,
+      },
+      {
+        id: "child-spontaneous-account",
+        type: "hechos",
+        title: "Relato espontáneo conservado sin interrogar",
+        prompt: "Anota solo las palabras espontáneas, cuándo las dijo y quién las escuchó; no pidas que vuelva a contarlo.",
+        reason: "Reduce la revictimización y conserva la información inicial sin completarla.",
+        priority: 130,
+      },
+      {
+        id: "child-health-attention",
+        type: "pruebas",
+        title: "Constancia de atención integral en salud",
+        prompt: "Agrega la constancia u orientación recibida en salud cuando exista; no esperes una denuncia para buscar atención.",
+        reason: "La ruta de salud es inmediata y distinta de la protección y la investigación.",
+        priority: 128,
+      },
+    ];
+  }
+
+  if (
+    orientation.documentKind === "arrendamiento-comunicacion" &&
+    /(?:subio|subieron|aumento|incremento|reajuste|alza).{0,30}canon|canon.{0,30}(?:subio|aumento|incremento)/.test(context)
+  ) {
+    return [
+      {
+        id: "lease-increase-notice",
+        type: "pruebas",
+        title: "Comunicación del nuevo canon",
+        prompt: "Agrega el mensaje o documento con el nuevo valor, porcentaje, fecha de vigencia y cálculo informado.",
+        reason: "Permite revisar el reajuste sin mezclarlo con una terminación del contrato.",
+        priority: 125,
+      },
+      {
+        id: "lease-price-history",
+        type: "fechas",
+        title: "Inicio del contrato y último reajuste",
+        prompt: "Registra la fecha de inicio, el canon anterior y cuándo cambió por última vez.",
+        reason: "La periodicidad del reajuste depende de cuánto tiempo se mantuvo el mismo precio.",
+        priority: 123,
+      },
+      {
+        id: "lease-payment-history",
+        type: "pruebas",
+        title: "Historial de cánones pagados",
+        prompt: "Agrega comprobantes recientes y separa canon, administración, servicios e intereses discutidos.",
+        reason: "Ayuda a comparar correctamente el valor anterior y los cobros nuevos.",
+        priority: 121,
+      },
+    ];
+  }
+
+  const tailored: CaseBlockSuggestion[] = [];
+  if (orientation.documentKind === "reclamacion-laboral" && /despid|terminacion/.test(context)) {
+    tailored.push({
+      id: "labor-termination-notice",
+      type: "pruebas",
+      title: "Carta, mensaje o forma del despido",
+      prompt: "Agrega lo recibido y registra qué causa te comunicaron, sin concluir todavía si fue justa o injusta.",
+      reason: "La forma y la causa deben revisarse por separado de los pagos pendientes.",
+      priority: 112,
+    });
+  }
+  if (orientation.documentKind === "solicitud-administrativa" && /comparendo|transito|vehiculo|carro/.test(context)) {
+    tailored.push({
+      id: "traffic-transfer-record",
+      type: "pruebas",
+      title: "Venta y fecha efectiva del traspaso",
+      prompt: "Agrega contrato, formulario y soporte registral que muestre cuándo quedó inscrito el traspaso.",
+      reason: "La fecha de la venta y la fecha registrada pueden producir análisis distintos.",
+      priority: 116,
+    });
+  }
+  if (orientation.documentKind === "relato-denuncia" && /estaf|transferencia|billetera digital/.test(context)) {
+    tailored.push({
+      id: "digital-fraud-transaction",
+      type: "pruebas",
+      title: "Transferencia, chats y perfil de venta",
+      prompt: "Agrega comprobante e ID de transacción, chats, URL, perfil y datos visibles de la cuenta sin editar originales.",
+      reason: "Conecta el pago con la oferta y permite reportar la operación sin prometer recuperación.",
+      priority: 116,
+    });
+  }
+  return tailored;
+}
+
 export function getSuggestedCaseBlocks(
-  category: LegalCategory,
+  context: LegalCategory | LegalOrientation,
   elements: CaseElement[],
 ): CaseBlockSuggestion[] {
+  const category =
+    typeof context === "string" ? context : categoryByDocumentKind[context.documentKind];
+  const contextual = typeof context === "string" ? [] : contextualSuggestions(context);
   const existing = new Set(elements.map((element) => `${element.type}:${normalize(element.title)}`));
-  return [...suggestionsByCategory[category], ...sharedSuggestions]
+  return [...new Map([...contextual, ...suggestionsByCategory[category], ...sharedSuggestions].map((item) => [item.id, item])).values()]
     .filter((suggestion) => !existing.has(`${suggestion.type}:${normalize(suggestion.title)}`))
     .sort((a, b) => b.priority - a.priority)
     .slice(0, 5);
@@ -606,7 +779,7 @@ function routeForDocument(
       nextAction: urgent ? "No respondas con un borrador genérico ni dejes pasar el día." : "Usa el resumen para pedir una orientación inicial.",
       timing: urgent ? "Busca revisión humana hoy." : officialTiming,
       cost: "Sin costo dentro de la aplicación.",
-      sourceIds: urgent ? ["rama-procesos", "codigo-general-proceso"] : ["legalapp"],
+      sourceIds: urgent ? ["rama-procesos", "codigo-general-proceso-judicial"] : ["legalapp"],
     },
     {
       id: "general-verify",
@@ -659,9 +832,129 @@ export function getColombianProcedureSteps(
     };
   }
 
+  if (orientation.sourceIds.includes("ley-1146") && steps[0]) {
+    steps[0] = {
+      ...steps[0],
+      stage: "Atención inmediata",
+      title: "Protege y busca atención integral en salud",
+      detail: "Evita el contacto con la persona señalada y solicita atención médica y psicológica inmediata. No es necesario denunciar primero y no pidas a la niña o niño que repita el relato.",
+      entity: "Servicio de salud e ICBF",
+      channel: "Urgencias o servicio de salud; Línea 141 para protección",
+      requirements: [
+        "No esperes una denuncia, evidencia ni documento para solicitar atención",
+        "Información espontánea ya conocida, sin pedir que repita el relato",
+        "Acompañante seguro y soportes, solo si están disponibles",
+      ],
+      expectedOutput: "Registro de atención integral y activación de la ruta de protección",
+      nextAction: "Conserva las constancias y sigue la orientación institucional sin confrontar a la persona señalada.",
+      timing: "Inmediato, aunque no exista lesión visible ni denuncia previa.",
+      sourceIds: ["ley-1146", "icbf-linea-141"],
+    };
+  }
+
+  if (orientation.sourceIds.includes("ley-820-canon")) {
+    if (steps[0]) {
+      steps[0] = {
+        ...steps[0],
+        title: "Verifica contrato, canon y fecha del último reajuste",
+        detail: "Separa el canon de administración, servicios e intereses y registra cuánto tiempo se mantuvo el mismo precio.",
+        requirements: ["Contrato", "Canon anterior", "Fecha de inicio o último reajuste", "Comprobantes recientes"],
+        expectedOutput: "Línea de tiempo y comparación verificable del canon",
+        nextAction: "No dejes de pagar ni firmes un cambio basándote solo en esta guía.",
+        sourceIds: ["ley-820-canon"],
+      };
+    }
+    if (steps[1]) {
+      steps[1] = {
+        ...steps[1],
+        title: "Pide por escrito el cálculo del reajuste",
+        detail: "Solicita valor anterior y nuevo, porcentaje, IPC usado, fecha de aplicación y soporte de cualquier interés.",
+        requirements: ["Identificación del contrato", "Valores comparados", "Solicitud concreta", "Canal de respuesta"],
+        expectedOutput: "Copia de la solicitud, recibido y respuesta con el cálculo",
+        sourceIds: ["ley-820-canon"],
+      };
+    }
+    if (steps[2]) {
+      steps[2] = {
+        ...steps[2],
+        title: "Busca orientación específica sobre el reajuste",
+        detail: "Lleva el contrato, los pagos y la comunicación a una Casa de Justicia, autoridad municipal competente o consultorio jurídico. Una discusión sobre el reajuste no implica por sí sola una restitución judicial.",
+        entity: "Casa de Justicia, autoridad municipal o consultorio jurídico",
+        requirements: ["Contrato", "Historial del canon", "Comunicación del reajuste", "Cálculo recibido o solicitado"],
+        expectedOutput: "Orientación o constancia sobre la revisión del reajuste",
+        nextAction: "Conserva la orientación y cualquier respuesta escrita en el expediente.",
+        sourceIds: ["ley-820-canon", "casas-justicia", "consultorios"],
+      };
+    }
+  }
+
+  if (orientation.sourceIds.includes("codigo-policia-tenencia") && steps[2]) {
+    steps[2] = {
+      ...steps[2],
+      title: "Verifica si hubo una perturbación de la tenencia",
+      detail: "Que un cerrajero observe la chapa no prueba por sí solo una perturbación. Si hubo intento o cambio efectivo de cerradura, negativa de acceso, ingreso o daños, solicita orientación inmediata sobre protección policiva.",
+      entity: "Inspector de Policía, Casa de Justicia o consultorio jurídico",
+      requirements: ["Relato exacto de lo ocurrido", "Pruebas disponibles", "Contrato o prueba de tenencia", "Información sobre acceso o daños"],
+      expectedOutput: "Definición de si corresponde querella policiva u otra ruta",
+      nextAction: "Prioriza tu seguridad y no confrontes ni adoptes medidas de hecho.",
+      sourceIds: ["codigo-policia-tenencia", "casas-justicia", "consultorios"],
+    };
+  }
+
+  if (orientation.sourceIds.includes("codigo-transito")) {
+    if (steps[0]) {
+      steps[0] = {
+        ...steps[0],
+        title: "Compara infracción, traspaso registrado y notificación",
+        detail: "Revisa la fecha de la infracción frente a la fecha efectiva del traspaso y pide el expediente y la prueba de notificación.",
+        requirements: ["Resolución o comparendo completo", "Expediente", "Prueba de notificación", "Contrato y soporte registral del traspaso"],
+        expectedOutput: "Cronología registral y administrativa lista para revisión",
+        sourceIds: ["codigo-transito", "cpaca"],
+      };
+    }
+    if (steps[1]) {
+      steps[1] = {
+        ...steps[1],
+        title: "Define la actuación ante la autoridad de tránsito",
+        detail: "Con el acto completo, confirma si corresponde ejercer defensa, interponer un recurso o solicitar corrección de datos; una petición genérica no sustituye esas actuaciones.",
+        entity: "Autoridad de tránsito que expidió el acto",
+        sourceIds: ["codigo-transito", "cpaca"],
+      };
+    }
+  }
+
+  if (orientation.sourceIds.includes("codigo-penal-estafa") && steps[0]) {
+    steps[0] = {
+      ...steps[0],
+      stage: "Preparar",
+      title: "Conserva y reporta la operación digital",
+      detail: "Guarda comprobante, ID de transacción, chats, URL y perfil. Reporta de inmediato a la billetera, banco y plataforma sin compartir claves ni enviar más dinero.",
+      entity: "Entidad financiera, billetera o plataforma",
+      channel: "Canal oficial de fraude o reclamaciones que entregue número de caso",
+      requirements: ["ID de transacción", "Comprobante", "Chats y perfil", "Datos visibles de la cuenta receptora"],
+      expectedOutput: "Número de reporte y conservación de la evidencia",
+      nextAction: "El reporte no garantiza reversión y no reemplaza la actuación ante la Fiscalía.",
+      timing: "Actúa pronto; la autoridad define si se requiere denuncia o querella.",
+      sourceIds: ["superfinanciera-quejas"],
+    };
+    if (steps[2]) {
+      steps[2] = {
+        ...steps[2],
+        title: "Pon los hechos en conocimiento de la Fiscalía",
+        detail: "Presenta el relato y confirma con la Fiscalía si jurídicamente corresponde denuncia o querella. La herramienta no define el delito ni calcula el vencimiento.",
+        requirements: ["Relato", "Comprobante", "Chats y perfil", "Número del reporte financiero, si existe"],
+        expectedOutput: "NUNC, constancia de recepción o instrucción oficial sobre la actuación aplicable",
+        nextAction: "Guarda el número completo y pregunta por el canal de consulta y actualización.",
+        timing: "Actúa pronto: algunas conductas pueden requerir querella y estar sujetas a un término legal.",
+        sourceIds: ["codigo-penal-estafa", "codigo-procedimiento-penal-querella", "fiscalia-denuncia"],
+      };
+    }
+  }
+
   if (
     orientation.documentKind === "medida-proteccion" &&
-    orientation.sourceIds.includes("codigo-general-proceso") &&
+    (orientation.sourceIds.includes("codigo-general-proceso") ||
+      orientation.sourceIds.includes("codigo-general-proceso-judicial")) &&
     steps[2]
   ) {
     steps[2] = {
@@ -669,7 +962,7 @@ export function getColombianProcedureSteps(
       detail: `${steps[2].detail} Además, lleva la notificación o citación judicial completa a revisión humana urgente.`,
       requirements: [...steps[2].requirements, "Notificación judicial completa y anexos"],
       expectedOutput: `${steps[2].expectedOutput} y definición urgente del plazo judicial`,
-      sourceIds: [...new Set([...steps[2].sourceIds, "codigo-general-proceso"])],
+      sourceIds: [...new Set([...steps[2].sourceIds, "codigo-general-proceso-judicial"])],
     };
   }
 

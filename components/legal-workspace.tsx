@@ -525,8 +525,8 @@ export function LegalWorkspace({ identityAvailable = false }: { identityAvailabl
     [elements],
   );
   const caseSuggestions = useMemo(
-    () => getSuggestedCaseBlocks(orientation.category, elements),
-    [elements, orientation.category],
+    () => getSuggestedCaseBlocks(orientation, elements),
+    [elements, orientation],
   );
   const procedureSteps = useMemo(
     () => getColombianProcedureSteps(orientation, city),

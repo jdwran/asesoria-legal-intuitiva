@@ -76,6 +76,12 @@ import {
 import type { CaseSessionSnapshot } from "@/lib/case-session";
 import { DETAILED_GUIDANCE_ACKNOWLEDGEMENT_VERSION } from "@/lib/detailed-guidance";
 import {
+  composeDraftExport,
+  DRAFT_EXPORT_OPTIONS,
+  getDraftExportFilename,
+  type DraftExportFormat,
+} from "@/lib/draft-export";
+import {
   CaseElement,
   CaseElementType,
   getOfficialSources,
@@ -107,6 +113,8 @@ type OrientationApiResponse = LegalOrientation & {
 
 const ORIENTATION_REQUEST_TIMEOUT_MS = 90_000;
 const SESSION_SAVE_DEBOUNCE_MS = 800;
+const TUTELA_EXPORT_WARNING =
+  "La tutela solo procede si no tienes otro medio de defensa o hay riesgo de un daño grave e inminente. Revisa este borrador con un abogado o un consultorio jurídico gratuito antes de radicarlo.";
 
 function AccountSessionStatus({
   account,
@@ -403,6 +411,7 @@ export function LegalWorkspace({ identityAvailable = false }: { identityAvailabl
   const [addOpen, setAddOpen] = useState(false);
   const [selectedSuggestion, setSelectedSuggestion] = useState<CaseBlockSuggestion | null>(null);
   const [documentOpen, setDocumentOpen] = useState(false);
+  const [draftExportFormat, setDraftExportFormat] = useState<DraftExportFormat>("story");
   const [story, setStory] = useState("");
   const [savedStory, setSavedStory] = useState("");
   const [city, setCity] = useState("");
@@ -918,9 +927,38 @@ Este es un borrador informativo. Revisa los datos y, si es posible, solicita ori
     return `borrador-${slug || "orientacion-legal"}.txt`;
   }, [orientation.recommendedDocument]);
 
+  const exportDate = useMemo(
+    () =>
+      new Intl.DateTimeFormat("es-CO", {
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+        timeZone: "America/Bogota",
+      }).format(new Date()),
+    [],
+  );
+
+  const exportedDraftText = useMemo(
+    () =>
+      composeDraftExport(draftExportFormat, {
+        draftText,
+        orientation,
+        city,
+        date: exportDate,
+        evidenceNames: elements
+          .filter((element) => element.type === "pruebas")
+          .map((element) => `${element.title}${element.detail ? ` — ${element.detail}` : ""}`),
+      }),
+    [city, draftExportFormat, draftText, elements, exportDate, orientation],
+  );
+
+  const exportedDraftFilename =
+    draftExportFormat === "story" ? draftFilename : getDraftExportFilename(draftExportFormat);
+
   function openCaseDialog(mode: "new" | "edit") {
     setCaseDialogMode(mode);
     setStory(mode === "new" ? "" : savedStory);
+    if (mode === "new") setDraftExportFormat("story");
     setProcessingConsent(false);
     setFormError("");
     setNewCaseOpen(true);
@@ -1878,22 +1916,51 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
                       </Badge>
                     </div>
                     <div className="max-h-[520px] overflow-auto whitespace-pre-wrap font-serif text-sm leading-7 text-slate-700">
-                      {draftText}
+                      {exportedDraftText}
                     </div>
                   </div>
                   <aside className="space-y-3">
                     <div className="rounded-xl border border-slate-200 bg-white p-4">
-                      <p className="text-sm font-semibold text-slate-900">Antes de usarlo</p>
-                      <ul className="mt-3 space-y-2 text-xs leading-5 text-slate-600">
-                        <li className="flex gap-2"><AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-amber-600" /> Revisa hechos, fechas, destinatario y solicitudes.</li>
-                        <li className="flex gap-2"><AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-amber-600" /> Este archivo no se radica automáticamente.</li>
-                        <li className="flex gap-2">
-                          {evidenceCount > 0 ? <Check className="mt-0.5 size-3.5 shrink-0 text-emerald-600" /> : <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-amber-600" />}
-                          {evidenceCount > 0 ? `${evidenceCount} ${evidenceCount === 1 ? "prueba registrada" : "pruebas registradas"}.` : "Aún no registraste pruebas."}
-                        </li>
-                      </ul>
+                      <p id="draft-export-format-label" className="text-sm font-semibold text-slate-900">Formato del borrador</p>
+                      <div className="mt-3 grid grid-cols-2 gap-2" role="radiogroup" aria-labelledby="draft-export-format-label">
+                        {DRAFT_EXPORT_OPTIONS.map((option) => {
+                          const selected = option.value === draftExportFormat;
+                          return (
+                            <Button
+                              key={option.value}
+                              type="button"
+                              variant={selected ? "default" : "outline"}
+                              size="sm"
+                              role="radio"
+                              aria-checked={selected}
+                              onClick={() => setDraftExportFormat(option.value)}
+                              className={`h-auto min-h-9 whitespace-normal px-2 py-2 text-center text-xs leading-4 ${selected ? "bg-[#173f6b] text-white hover:bg-[#102f51]" : "text-slate-700"}`}
+                            >
+                              {option.label}
+                            </Button>
+                          );
+                        })}
+                      </div>
                     </div>
-                    <Button className="w-full bg-[#173f6b] text-white hover:bg-[#102f51]" onClick={() => downloadText(draftFilename, draftText)}>
+                    {draftExportFormat === "tutela" ? (
+                      <div role="alert" className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-4 text-xs leading-5 text-amber-950">
+                        <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-700" />
+                        <p>{TUTELA_EXPORT_WARNING}</p>
+                      </div>
+                    ) : (
+                      <div className="rounded-xl border border-slate-200 bg-white p-4">
+                        <p className="text-sm font-semibold text-slate-900">Antes de usarlo</p>
+                        <ul className="mt-3 space-y-2 text-xs leading-5 text-slate-600">
+                          <li className="flex gap-2"><AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-amber-600" /> Revisa hechos, fechas, destinatario y solicitudes.</li>
+                          <li className="flex gap-2"><AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-amber-600" /> Este archivo no se radica automáticamente.</li>
+                          <li className="flex gap-2">
+                            {evidenceCount > 0 ? <Check className="mt-0.5 size-3.5 shrink-0 text-emerald-600" /> : <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-amber-600" />}
+                            {evidenceCount > 0 ? `${evidenceCount} ${evidenceCount === 1 ? "prueba registrada" : "pruebas registradas"}.` : "Aún no registraste pruebas."}
+                          </li>
+                        </ul>
+                      </div>
+                    )}
+                    <Button className="w-full bg-[#173f6b] text-white hover:bg-[#102f51]" onClick={() => downloadText(exportedDraftFilename, exportedDraftText)}>
                       <Download className="size-4" /> Descargar borrador
                     </Button>
                     <Button variant="outline" className="w-full" onClick={downloadCaseFile}>
@@ -2052,7 +2119,7 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
             <DialogDescription>Los campos entre corchetes requieren revisión. El documento no se radica automáticamente.</DialogDescription>
           </DialogHeader>
           <div className="my-2 max-h-[52vh] overflow-auto rounded-lg border border-slate-200 bg-[#fdfcf8] p-6 whitespace-pre-wrap font-serif text-sm leading-7 text-slate-700">
-            {draftText}
+            {exportedDraftText}
           </div>
           <div className="flex items-start gap-2 rounded-lg bg-amber-50 p-3 text-xs leading-5 text-amber-900">
             <AlertTriangle className="mt-0.5 size-4 shrink-0" />
@@ -2060,7 +2127,7 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDocumentOpen(false)}>Volver al expediente</Button>
-            <Button onClick={() => downloadText(draftFilename, draftText)} className="bg-[#173f6b] text-white hover:bg-[#102f51]">
+            <Button onClick={() => downloadText(exportedDraftFilename, exportedDraftText)} className="bg-[#173f6b] text-white hover:bg-[#102f51]">
               <Download className="size-4" /> Descargar borrador
             </Button>
           </DialogFooter>

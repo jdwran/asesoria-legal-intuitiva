@@ -155,8 +155,8 @@ export const officialSources: OfficialSource[] = [
     id: "ley-2126",
     shortTitle: "Ley 2126 de 2021",
     title: "Creación y funcionamiento de las comisarías de familia",
-    organization: "Secretaría Jurídica Distrital",
-    url: "https://www.alcaldiabogota.gov.co/sisjur/normas/Norma1.jsp?i=116733",
+    organization: "SUIN-Juriscol · Ministerio de Justicia",
+    url: "https://www.suin-juriscol.gov.co/viewDocument.asp?ruta=Leyes%2F30042087",
   },
   {
     id: "legalapp",

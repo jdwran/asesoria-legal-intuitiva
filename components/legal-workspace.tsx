@@ -4,12 +4,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   ArrowRight,
-  BookOpen,
   Building2,
   CalendarDays,
   Check,
   ChevronRight,
-  CircleHelp,
   ClipboardCheck,
   Clock3,
   Compass,
@@ -28,7 +26,6 @@ import {
   Pencil,
   Plus,
   Scale,
-  Search,
   ShieldCheck,
   Sparkles,
   Upload,
@@ -66,6 +63,12 @@ import {
 } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  type CaseBlockSuggestion,
+  getCaseOutputs,
+  getColombianProcedureSteps,
+  getSuggestedCaseBlocks,
+} from "@/lib/case-guidance";
+import {
   CaseElement,
   CaseElementType,
   getOfficialSources,
@@ -81,7 +84,7 @@ import {
   isOrientationFormReady,
 } from "@/lib/orientation-form";
 
-type NavKey = "resumen" | CaseElementType | "ruta";
+type NavKey = "resumen" | "expediente" | "ruta" | "resultados";
 type AnalysisProvider = "demo" | "open" | "openai";
 type AnalysisMode = "ready" | "demo" | "ai";
 type OrientationApiResponse = LegalOrientation & {
@@ -151,25 +154,13 @@ const navGroups: Array<{
   }>;
 }> = [
   {
-    label: "Tu caso",
+    label: "Tu recorrido",
     items: [
-      { id: "resumen", label: "Vista general", icon: FolderOpen },
-      { id: "hechos", label: "Lo que pasó", icon: ClipboardCheck },
-      { id: "personas", label: "Personas y entidades", icon: Users },
-      { id: "fechas", label: "Fechas clave", icon: CalendarDays },
+      { id: "resumen", label: "Inicio", icon: FolderOpen },
+      { id: "expediente", label: "Completar mi caso", icon: ClipboardCheck },
+      { id: "ruta", label: "Pasos y trámites", icon: Compass },
+      { id: "resultados", label: "Mis resultados", icon: FileCheck2 },
     ],
-  },
-  {
-    label: "Lo que lo respalda",
-    items: [
-      { id: "pruebas", label: "Pruebas", icon: Paperclip },
-      { id: "normas", label: "Fuentes oficiales", icon: BookOpen },
-      { id: "documentos", label: "Documentos", icon: FileText },
-    ],
-  },
-  {
-    label: "Actuar",
-    items: [{ id: "ruta", label: "Ruta recomendada", icon: Compass }],
   },
 ];
 
@@ -208,8 +199,8 @@ function CaseNavigation({
   onNavigate?: () => void;
 }) {
   const getCount = (id: NavKey) => {
-    if (id === "resumen" || id === "ruta") return null;
-    return elements.filter((element) => element.type === id).length;
+    if (id === "expediente") return elements.length;
+    return null;
   };
 
   return (
@@ -243,7 +234,7 @@ function CaseNavigation({
         </div>
       </div>
 
-      <nav className="flex-1 space-y-6 overflow-y-auto px-3 py-5" aria-label="Piezas del caso">
+      <nav className="flex-1 space-y-6 overflow-y-auto px-3 py-5" aria-label="Recorrido del caso">
         {navGroups.map((group) => (
           <div key={group.label}>
             <p className="mb-2 px-2 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">
@@ -286,7 +277,7 @@ function CaseNavigation({
           className="h-10 w-full bg-emerald-400 font-semibold text-slate-950 hover:bg-emerald-300"
         >
           <Plus className="size-4" />
-          Agregar al expediente
+          Agregar un bloque
         </Button>
       </div>
     </div>
@@ -295,6 +286,7 @@ function CaseNavigation({
 
 export function LegalWorkspace() {
   const resultHeadingRef = useRef<HTMLHeadingElement>(null);
+  const triageSectionRef = useRef<HTMLElement>(null);
   const [activeSection, setActiveSection] = useState<NavKey>("resumen");
   const [elements, setElements] = useState<CaseElement[]>(initialElements);
   const [orientation, setOrientation] = useState<LegalOrientation>(initialOrientation);
@@ -303,6 +295,7 @@ export function LegalWorkspace() {
   const [caseMenuOpen, setCaseMenuOpen] = useState(false);
   const [caseDialogMode, setCaseDialogMode] = useState<"new" | "edit">("new");
   const [addOpen, setAddOpen] = useState(false);
+  const [selectedSuggestion, setSelectedSuggestion] = useState<CaseBlockSuggestion | null>(null);
   const [documentOpen, setDocumentOpen] = useState(false);
   const [story, setStory] = useState("");
   const [savedStory, setSavedStory] = useState("");
@@ -349,6 +342,21 @@ export function LegalWorkspace() {
     () => elements.filter((element) => element.type === "pruebas").length,
     [elements],
   );
+  const caseSuggestions = useMemo(
+    () => getSuggestedCaseBlocks(orientation.category, elements),
+    [elements, orientation.category],
+  );
+  const procedureSteps = useMemo(
+    () => getColombianProcedureSteps(orientation, city),
+    [city, orientation],
+  );
+  const caseOutputs = useMemo(
+    () => getCaseOutputs(orientation, elements, completedSteps),
+    [completedSteps, elements, orientation],
+  );
+  const nextProcedureIndex = procedureSteps.findIndex((_, index) => !completedSteps.includes(index));
+  const nextProcedure = procedureSteps[nextProcedureIndex === -1 ? procedureSteps.length - 1 : nextProcedureIndex];
+  const needsTriage = !triageSaved && orientation.triageQuestions.length > 0;
 
   useEffect(() => {
     if (!hasAnalyzedCase) return;
@@ -357,11 +365,6 @@ export function LegalWorkspace() {
     });
     return () => window.cancelAnimationFrame(frame);
   }, [hasAnalyzedCase]);
-
-  const filteredElements = useMemo(() => {
-    if (activeSection === "resumen" || activeSection === "ruta") return [];
-    return elements.filter((element) => element.type === activeSection);
-  }, [activeSection, elements]);
 
   const completeness = useMemo(() => {
     const covered = new Set(elements.map((element) => element.type)).size;
@@ -424,6 +427,9 @@ ${elements.map((element, index) => `${index + 1}. [${typeLabels[element.type]}] 
 PREGUNTAS PARA QUIEN REVISE EL CASO
 ${orientation.triageQuestions.map((question, index) => `${index + 1}. ${question}`).join("\n") || "No se registraron preguntas pendientes."}
 
+RUTA DE TRÁMITES SUGERIDA
+${procedureSteps.map((step, index) => `${index + 1}. ${step.title}\n   Entidad: ${step.entity}\n   Canal: ${step.channel}\n   Qué obtener: ${step.expectedOutput}\n   Después: ${step.nextAction}`).join("\n")}
+
 FUENTES SUGERIDAS PARA VERIFICAR
 ${allRelevantSources.map((source) => `- ${source.title}: ${source.url}`).join("\n")}
 
@@ -455,6 +461,9 @@ ${elements
   .map((element, index) => `${index + 1}. ${element.title}`)
   .join("\n")}
 
+RUTA DE TRÁMITES SUGERIDA
+${procedureSteps.map((step, index) => `${index + 1}. ${step.title}\n   Entidad: ${step.entity}\n   Canal: ${step.channel}\n   Qué reunir: ${step.requirements.join("; ")}\n   Qué obtener: ${step.expectedOutput}\n   Después: ${step.nextAction}`).join("\n")}
+
 Notificaciones: [CORREO / DIRECCIÓN]
 
 Atentamente,
@@ -464,7 +473,7 @@ FUENTES SUGERIDAS PARA VERIFICAR
 ${allRelevantSources.map((source) => `- ${source.title}: ${source.url}`).join("\n")}
 
 Este es un borrador informativo. Revisa los datos y, si es posible, solicita orientación jurídica antes de radicarlo.`;
-  }, [allRelevantSources, city, elements, orientation]);
+  }, [allRelevantSources, city, elements, orientation, procedureSteps]);
 
   const draftFilename = useMemo(() => {
     const slug = orientation.recommendedDocument
@@ -624,10 +633,36 @@ Este es un borrador informativo. Revisa los datos y, si es posible, solicita ori
       status: "pendiente",
     };
     setElements((current) => [...current, item]);
-    setActiveSection(newElement.type);
+    setActiveSection("expediente");
     setNewElement({ type: "pruebas", title: "", detail: "", date: "" });
+    setSelectedSuggestion(null);
     setAddOpen(false);
     setNotice(`${typeLabels[item.type]} agregado al expediente`);
+  }
+
+  function openSuggestedBlock(suggestion: CaseBlockSuggestion) {
+    setSelectedSuggestion(suggestion);
+    setNewElement({
+      type: suggestion.type,
+      title: suggestion.title,
+      detail: "",
+      date: "",
+    });
+    setAddOpen(true);
+  }
+
+  function openCustomBlock() {
+    setSelectedSuggestion(null);
+    setNewElement({ type: "pruebas", title: "", detail: "", date: "" });
+    setAddOpen(true);
+  }
+
+  function goToNextAction() {
+    if (needsTriage) {
+      triageSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
+    }
+    setActiveSection("ruta");
   }
 
   function toggleStep(index: number) {
@@ -689,7 +724,7 @@ PIEZAS DEL EXPEDIENTE
 ${elements.map((element, index) => `${index + 1}. [${typeLabels[element.type]}] ${element.title}\n   ${element.detail}${element.sourceUrl ? `\n   Fuente: ${element.sourceUrl}` : ""}`).join("\n")}
 
 RUTA SUGERIDA
-${orientation.nextSteps.map((step, index) => `${index + 1}. ${step.title}: ${step.detail}`).join("\n")}
+${procedureSteps.map((step, index) => `${index + 1}. ${step.title}\n   ${step.detail}\n   Entidad: ${step.entity}\n   Canal: ${step.channel}\n   Requisitos: ${step.requirements.join("; ")}\n   Resultado esperado: ${step.expectedOutput}\n   Siguiente: ${step.nextAction}`).join("\n")}
 
 FUENTES OFICIALES SUGERIDAS PARA VERIFICAR
 ${allRelevantSources.map((source) => `- ${source.title}: ${source.url}`).join("\n")}
@@ -750,7 +785,7 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
                   elements={elements}
                   onAdd={() => {
                     setCaseMenuOpen(false);
-                    setAddOpen(true);
+                    openCustomBlock();
                   }}
                   caseTitle={orientation.caseTitle}
                   city={city}
@@ -787,28 +822,21 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
             <Check className="size-3.5 text-emerald-600" />
             {notice}
           </span>
-          <Button variant="ghost" size="icon" className="hidden sm:inline-flex" aria-label="Buscar en el expediente (próximamente)" title="Búsqueda disponible en el siguiente corte" disabled>
-            <Search className="size-4" />
-          </Button>
-          <Button variant="ghost" size="icon" className="hidden sm:inline-flex" aria-label="Ayuda (próximamente)" title="Centro de ayuda disponible en el siguiente corte" disabled>
-            <CircleHelp className="size-4" />
-          </Button>
           <Button onClick={() => openCaseDialog("new")} className="bg-[#173f6b] text-white hover:bg-[#102f51]">
             <Pencil className="size-4" />
-            <span className="hidden sm:inline">{hasAnalyzedCase ? "Reemplazar caso" : "Crear mi caso"}</span>
-            <span className="sm:hidden">{hasAnalyzedCase ? "Reemplazar" : "Crear caso"}</span>
+            <span className="hidden sm:inline">Nuevo caso</span>
+            <span className="sm:hidden">Nuevo</span>
           </Button>
-          <div className="ml-1 grid size-8 place-items-center rounded-full bg-amber-100 text-xs font-bold text-amber-900">LM</div>
         </div>
       </header>
 
-      <div className="grid min-h-[calc(100dvh-4rem)] lg:grid-cols-[270px_minmax(0,1fr)] 2xl:grid-cols-[270px_minmax(560px,1fr)_360px]">
+      <div className="grid min-h-[calc(100dvh-4rem)] lg:grid-cols-[260px_minmax(0,1fr)]">
         <aside className="sticky top-16 hidden h-[calc(100dvh-4rem)] bg-[#102238] lg:block">
           <CaseNavigation
             activeSection={activeSection}
             setActiveSection={setActiveSection}
             elements={elements}
-            onAdd={() => setAddOpen(true)}
+            onAdd={openCustomBlock}
             caseTitle={orientation.caseTitle}
             city={city}
             completeness={completeness}
@@ -816,7 +844,7 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
         </aside>
 
         <main className="min-w-0 px-4 py-6 sm:px-6 xl:px-8 xl:py-8">
-          <div className="mx-auto max-w-4xl">
+          <div className="mx-auto max-w-5xl">
             <div className="mb-6 flex items-start justify-between gap-4">
               <div>
                 <div className="mb-2 flex items-center gap-2 text-xs font-medium text-slate-500">
@@ -888,39 +916,40 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
 
             {activeSection === "resumen" && (
               <div className="space-y-6">
-                <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
-                  <div className="flex items-start gap-4 border-b border-slate-100 px-5 py-5 sm:px-6">
-                    <div className="mt-0.5 grid size-9 shrink-0 place-items-center rounded-lg bg-emerald-50 text-emerald-700">
-                      <ClipboardCheck className="size-[18px]" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <h2 className="font-semibold text-slate-900">Esto fue lo que entendimos</h2>
-                        <Button variant="ghost" size="sm" onClick={() => openCaseDialog("edit")} className="h-7 text-xs text-slate-500">
-                          <Pencil className="size-3" /> Editar
-                        </Button>
+                <section className="overflow-hidden rounded-2xl bg-[#102238] text-white shadow-lg shadow-slate-900/10">
+                  <div className="grid gap-5 px-5 py-6 sm:px-7 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+                    <div className="flex items-start gap-4">
+                      <div className="grid size-10 shrink-0 place-items-center rounded-xl bg-emerald-400 text-slate-950">
+                        {needsTriage ? <Info className="size-5" /> : <ArrowRight className="size-5" />}
                       </div>
-                      <p className="mt-2 text-[15px] leading-7 text-slate-600">{orientation.plainSummary}</p>
+                      <div>
+                        <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-emerald-300">
+                          Haz esto ahora
+                        </p>
+                        <h2 className="mt-2 font-serif text-2xl font-semibold">
+                          {needsTriage ? "Confirma los datos que cambian tu ruta" : nextProcedure?.title}
+                        </h2>
+                        <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">
+                          {needsTriage
+                            ? "Son máximo dos respuestas. Se guardan como hechos del expediente y afinan los trámites sugeridos."
+                            : nextProcedure?.detail}
+                        </p>
+                        {!needsTriage && nextProcedure && (
+                          <p className="mt-3 text-xs font-medium text-emerald-200">
+                            Resultado esperado: {nextProcedure.expectedOutput}
+                          </p>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                  <div className="grid gap-px bg-slate-100 sm:grid-cols-3">
-                    <div className="bg-white px-5 py-4">
-                      <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">Tipo de caso</p>
-                      <p className="mt-1.5 text-sm font-semibold capitalize text-slate-800">{orientation.category}</p>
-                    </div>
-                    <div className="bg-white px-5 py-4">
-                      <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">Piezas reunidas</p>
-                      <p className="mt-1.5 text-sm font-semibold text-slate-800">{elements.length} en el expediente</p>
-                    </div>
-                    <div className="bg-white px-5 py-4">
-                      <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">Próxima acción</p>
-                      <p className="mt-1.5 text-sm font-semibold text-[#173f6b]">{orientation.nextSteps[1]?.title ?? orientation.nextSteps[0]?.title}</p>
-                    </div>
+                    <Button onClick={goToNextAction} className="shrink-0 bg-white text-[#102238] hover:bg-slate-100">
+                      {needsTriage ? "Responder ahora" : "Ver paso y requisitos"}
+                      <ArrowRight className="size-4" />
+                    </Button>
                   </div>
                 </section>
 
                 {!triageSaved && orientation.triageQuestions.length > 0 && (
-                  <section className="rounded-2xl border border-amber-200 bg-[#fffaf0] p-5 sm:p-6">
+                  <section ref={triageSectionRef} className="scroll-mt-24 rounded-2xl border border-amber-200 bg-[#fffaf0] p-5 sm:p-6">
                     <div className="flex items-start gap-3">
                       <div className="grid size-8 shrink-0 place-items-center rounded-lg bg-amber-100 text-amber-700">
                         <Info className="size-4" />
@@ -928,8 +957,8 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <div>
-                            <p className="font-semibold text-amber-950">Dos datos para afinar tu ruta</p>
-                            <p className="mt-1 text-sm text-amber-800/80">No son preguntas de chat: quedarán dentro del expediente.</p>
+                            <p className="font-semibold text-amber-950">Confirma solo lo necesario</p>
+                            <p className="mt-1 text-sm text-amber-800/80">Tus respuestas quedarán como bloques confirmados del expediente.</p>
                           </div>
                           <Badge className="rounded-md bg-amber-100 text-amber-800">Por confirmar</Badge>
                         </div>
@@ -968,67 +997,75 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
                   </section>
                 )}
 
-                <section>
-                  <div className="mb-3 flex items-end justify-between gap-4">
-                    <div>
-                      <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Expediente visual</p>
-                      <h2 className="mt-1 font-serif text-2xl font-semibold text-[#102238]">Piezas de tu caso</h2>
+                <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
+                  <div className="flex items-start gap-4 px-5 py-5 sm:px-6">
+                    <div className="mt-0.5 grid size-9 shrink-0 place-items-center rounded-lg bg-emerald-50 text-emerald-700">
+                      <ClipboardCheck className="size-[18px]" />
                     </div>
-                    <Button variant="ghost" size="sm" onClick={() => setAddOpen(true)} className="text-[#173f6b]">
-                      <Plus className="size-4" /> Agregar pieza
-                    </Button>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <h2 className="font-semibold text-slate-900">Esto fue lo que entendimos</h2>
+                        <Button variant="ghost" size="sm" onClick={() => openCaseDialog("edit")} className="h-8 text-xs text-slate-500">
+                          <Pencil className="size-3" /> Corregir
+                        </Button>
+                      </div>
+                      <p className="mt-2 text-[15px] leading-7 text-slate-600">{orientation.plainSummary}</p>
+                    </div>
                   </div>
-
-                  <div className="grid gap-3 md:grid-cols-2">
-                    {elements.slice(0, 4).map((element) => (
-                      <article key={element.id} className="group border-l-2 border-slate-300 bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition hover:border-emerald-500 hover:shadow-md">
-                        <div className="flex items-start gap-3">
-                          <div className="grid size-8 shrink-0 place-items-center bg-slate-50 text-slate-500">
-                            {element.type === "pruebas" ? <Paperclip className="size-4" /> : <FileText className="size-4" />}
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center justify-between gap-2">
-                              <p className="truncate text-sm font-semibold text-slate-900">{element.title}</p>
-                              {element.status === "listo" ? (
-                                <Check className="size-4 shrink-0 text-emerald-600" />
-                              ) : (
-                                <span className="size-2 shrink-0 rounded-full bg-amber-400" />
-                              )}
-                            </div>
-                            <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500">{element.detail}</p>
-                            <div className="mt-3 flex items-center justify-between">
-                              <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400">
-                                {typeLabels[element.type]}
-                              </span>
-                              {element.status !== "listo" && (
-                                <button onClick={() => confirmElement(element.id)} className="text-xs font-medium text-[#173f6b] hover:underline">
-                                  Confirmar dato
-                                </button>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      </article>
-                    ))}
+                  <div className="grid gap-px border-t border-slate-100 bg-slate-100 md:grid-cols-2">
+                    <div className="bg-white px-5 py-4 sm:px-6">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-indigo-600">Lo que te protege</p>
+                      <p className="mt-2 text-sm font-semibold text-slate-900">{orientation.rightTitle}</p>
+                      <p className="mt-1.5 text-xs leading-5 text-slate-600">{orientation.rightExplanation}</p>
+                    </div>
+                    <div className="bg-white px-5 py-4 sm:px-6">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">Fuentes para verificar</p>
+                      <div className="mt-2 space-y-2">
+                        {sources.map((source) => (
+                          <a key={source.id} href={source.url} target="_blank" rel="noreferrer" className="flex items-center justify-between gap-3 text-sm font-semibold text-[#173f6b] hover:underline">
+                            <span>{source.shortTitle}</span>
+                            <ExternalLink className="size-3.5 shrink-0" />
+                          </a>
+                        ))}
+                      </div>
+                    </div>
                   </div>
                 </section>
 
-                <section className="rounded-2xl bg-[#102238] px-5 py-5 text-white shadow-lg shadow-slate-900/5 sm:px-6">
-                  <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="flex items-start gap-3">
-                      <div className="grid size-10 shrink-0 place-items-center rounded-lg bg-emerald-400 text-slate-950">
-                        <FileCheck2 className="size-5" />
-                      </div>
-                      <div>
-                        <p className="font-semibold">Tu siguiente resultado: {orientation.recommendedDocument}</p>
-                        <p className="mt-1 max-w-xl text-sm leading-6 text-slate-300">{orientation.documentReason}</p>
-                      </div>
+                <section>
+                  <div className="mb-3 flex items-end justify-between gap-4">
+                    <div>
+                      <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Personaliza tu expediente</p>
+                      <h2 className="mt-1 font-serif text-2xl font-semibold text-[#102238]">Bloques sugeridos para tu caso</h2>
+                      <p className="mt-1 text-sm text-slate-500">Agrega solo los que te sirvan. Nada se incorpora sin tu confirmación.</p>
                     </div>
-                    <Button onClick={() => setDocumentOpen(true)} className="shrink-0 bg-white text-[#102238] hover:bg-slate-100">
-                      Ver borrador
-                      <ArrowRight className="size-4" />
+                    <Button variant="ghost" size="sm" onClick={() => setActiveSection("expediente")} className="hidden text-[#173f6b] sm:inline-flex">
+                      Ver expediente <ChevronRight className="size-4" />
                     </Button>
                   </div>
+
+                  <div className="grid gap-3 md:grid-cols-3">
+                    {caseSuggestions.slice(0, 3).map((suggestion) => (
+                      <article key={suggestion.id} className="flex min-h-48 flex-col rounded-xl border border-slate-200 bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
+                        <div className="flex items-start justify-between gap-3">
+                          <span className="rounded-md bg-slate-100 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">
+                            {typeLabels[suggestion.type]}
+                          </span>
+                          <Plus className="size-4 text-emerald-600" />
+                        </div>
+                        <h3 className="mt-4 text-sm font-semibold text-slate-900">{suggestion.title}</h3>
+                        <p className="mt-2 flex-1 text-xs leading-5 text-slate-600">{suggestion.reason}</p>
+                        <Button variant="outline" size="sm" className="mt-4 w-full text-[#173f6b]" onClick={() => openSuggestedBlock(suggestion)}>
+                          Agregar este bloque
+                        </Button>
+                      </article>
+                    ))}
+                  </div>
+                  {caseSuggestions.length === 0 && (
+                    <div className="rounded-xl border border-dashed border-slate-300 bg-white/70 p-5 text-sm text-slate-600">
+                      Ya agregaste los bloques prioritarios. Puedes crear uno propio desde “Completar mi caso”.
+                    </div>
+                  )}
                 </section>
               </div>
             )}
@@ -1038,25 +1075,33 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
                 <div className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6">
                   <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                     <div>
-                      <p className="text-sm font-semibold text-slate-900">Entender → preparar → actuar</p>
-                      <p className="mt-1 text-sm text-slate-500">Marca cada paso cuando lo completes. La ruta se puede compartir con quien revise tu caso.</p>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="text-sm font-semibold text-slate-900">Tu ruta operativa en Colombia</p>
+                        <Badge variant="outline" className="rounded-md border-emerald-200 bg-emerald-50 text-[10px] text-emerald-700">
+                          Verificada 15 ago 2026
+                        </Badge>
+                      </div>
+                      <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-500">
+                        Cada paso indica qué reunir, dónde hacerlo, qué comprobante guardar y qué sigue. Confirma disponibilidad y términos en el canal oficial.
+                      </p>
                     </div>
                     <div className="min-w-40">
                       <div className="mb-2 flex justify-between text-xs text-slate-500">
                         <span>Progreso</span>
-                        <span>{Math.round((completedSteps.length / orientation.nextSteps.length) * 100)}%</span>
+                        <span>{Math.round((completedSteps.length / procedureSteps.length) * 100)}%</span>
                       </div>
-                      <Progress value={(completedSteps.length / orientation.nextSteps.length) * 100} />
+                      <Progress value={(completedSteps.length / procedureSteps.length) * 100} />
                     </div>
                   </div>
                 </div>
 
                 <ol className="space-y-0">
-                  {orientation.nextSteps.map((step, index) => {
+                  {procedureSteps.map((step, index) => {
                     const complete = completedSteps.includes(index);
+                    const stepSources = getOfficialSources(step.sourceIds);
                     return (
                       <li key={step.title} className="relative grid grid-cols-[40px_1fr] gap-4 pb-5 last:pb-0">
-                        {index < orientation.nextSteps.length - 1 && (
+                        {index < procedureSteps.length - 1 && (
                           <span className="absolute left-5 top-10 h-[calc(100%-1.5rem)] w-px bg-slate-300" />
                         )}
                         <button
@@ -1072,9 +1117,11 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
                         >
                           {complete ? <Check className="size-4" /> : <span className="text-sm font-bold">{index + 1}</span>}
                         </button>
-                        <article className={`rounded-xl border p-5 ${complete ? "border-emerald-200 bg-emerald-50/60" : "border-slate-200 bg-white"}`}>
+                        <article className={`overflow-hidden rounded-xl border ${complete ? "border-emerald-200 bg-emerald-50/60" : "border-slate-200 bg-white"}`}>
+                          <div className="p-5 sm:p-6">
                           <div className="flex flex-wrap items-start justify-between gap-3">
                             <div>
+                              <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#173f6b]">{step.stage}</p>
                               <p className="font-semibold text-slate-900">{step.title}</p>
                               <p className="mt-1.5 text-sm leading-6 text-slate-600">{step.detail}</p>
                             </div>
@@ -1082,154 +1129,278 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
                               {complete ? "Completado" : index === completedSteps.length ? "Haz esto ahora" : "Después"}
                             </Badge>
                           </div>
-                          <div className="mt-4 flex items-start gap-2 border-t border-slate-100 pt-4 text-xs leading-5 text-slate-500">
-                            <Info className="mt-0.5 size-3.5 shrink-0" />
-                            <span>Disponibilidad, requisitos y duración varían según la entidad. Confírmalos en el canal oficial.</span>
+
+                          <div className="mt-5 grid gap-4 border-t border-slate-100 pt-5 md:grid-cols-2">
+                            <div>
+                              <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400">Dónde y cómo</p>
+                              <p className="mt-2 text-sm font-semibold text-slate-900">{step.entity}</p>
+                              <p className="mt-1 text-xs leading-5 text-slate-600">{step.channel}</p>
+                            </div>
+                            <div>
+                              <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400">Qué debes reunir</p>
+                              <ul className="mt-2 space-y-1.5 text-xs leading-5 text-slate-600">
+                                {step.requirements.map((requirement) => (
+                                  <li key={requirement} className="flex gap-2">
+                                    <Check className="mt-0.5 size-3.5 shrink-0 text-emerald-600" />
+                                    <span>{requirement}</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          </div>
+
+                          <div className="mt-5 rounded-xl border border-emerald-100 bg-emerald-50 p-4">
+                            <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-emerald-700">Qué debes obtener</p>
+                            <p className="mt-1.5 text-sm font-semibold text-emerald-950">{step.expectedOutput}</p>
+                            <p className="mt-2 text-xs leading-5 text-emerald-900/75"><strong>Después:</strong> {step.nextAction}</p>
+                          </div>
+
+                          <div className="mt-4 grid gap-2 text-xs leading-5 text-slate-500 sm:grid-cols-2">
+                            <p className="flex items-start gap-2"><Clock3 className="mt-0.5 size-3.5 shrink-0" /> {step.timing}</p>
+                            <p className="flex items-start gap-2"><Info className="mt-0.5 size-3.5 shrink-0" /> {step.cost}</p>
+                          </div>
+                          </div>
+
+                          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 bg-white/70 px-5 py-3">
+                            <div className="flex flex-wrap gap-x-3 gap-y-1">
+                              {stepSources.map((source) => (
+                                <a key={source.id} href={source.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs font-semibold text-[#173f6b] hover:underline">
+                                  {source.shortTitle} <ExternalLink className="size-3" />
+                                </a>
+                              ))}
+                            </div>
+                            <Button variant={complete ? "outline" : "default"} size="sm" onClick={() => toggleStep(index)} className={complete ? "" : "bg-[#173f6b] text-white hover:bg-[#102f51]"}>
+                              {complete ? "Marcar pendiente" : "Marcar completado"}
+                            </Button>
                           </div>
                         </article>
                       </li>
                     );
                   })}
                 </ol>
+
+                <section className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6">
+                  <div className="mb-4">
+                    <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Apoyo gratuito o público</p>
+                    <h2 className="mt-1 font-serif text-2xl font-semibold text-[#102238]">Dónde pedir ayuda para este caso</h2>
+                  </div>
+                  <div className="grid gap-3 md:grid-cols-2">
+                    {orientation.freeHelp.map((help) => {
+                      const helpSource = getOfficialSources([help.sourceId])[0];
+                      return (
+                        <article key={help.name} className="rounded-xl border border-slate-200 p-4">
+                          <div className="flex items-start gap-3">
+                            <div className="grid size-9 shrink-0 place-items-center rounded-lg bg-amber-50 text-amber-700">
+                              <Building2 className="size-4" />
+                            </div>
+                            <div>
+                              <h3 className="text-sm font-semibold text-slate-900">{help.name}</h3>
+                              <p className="mt-1 text-xs leading-5 text-slate-600">{help.detail}</p>
+                              <p className="mt-2 text-xs font-medium text-amber-800">{help.channel}</p>
+                              {helpSource && (
+                                <a href={helpSource.url} target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-[#173f6b] hover:underline">
+                                  Ver canal oficial <ExternalLink className="size-3" />
+                                </a>
+                              )}
+                            </div>
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </div>
+                </section>
               </div>
             )}
 
-            {activeSection !== "resumen" && activeSection !== "ruta" && activeSection !== "documentos" && (
-              <div className="space-y-4">
-                <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-white px-4 py-3">
-                  <p className="text-sm text-slate-600">
-                    {filteredElements.length === 1 ? "1 pieza guardada" : `${filteredElements.length} piezas guardadas`} en esta sección.
-                  </p>
-                  <Button size="sm" onClick={() => setAddOpen(true)} className="bg-[#173f6b] text-white hover:bg-[#102f51]">
-                    <Plus className="size-4" /> Agregar
-                  </Button>
-                </div>
-
-                {activeSection === "normas" && suggestedSources.map((source) => (
-                  <article key={source.id} className="rounded-xl border border-slate-200 bg-white p-5">
-                    <div className="flex items-start gap-4">
-                      <div className="grid size-10 shrink-0 place-items-center rounded-lg bg-indigo-50 text-indigo-700">
-                        <Landmark className="size-5" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <h2 className="font-semibold text-slate-900">{source.shortTitle}</h2>
-                          <Badge variant="outline" className="rounded-md border-emerald-200 bg-emerald-50 text-[10px] text-emerald-700">
-                            Fuente oficial
-                          </Badge>
-                        </div>
-                        <p className="mt-1 text-sm text-slate-600">{source.title}</p>
-                        <p className="mt-3 text-xs text-slate-500">{source.organization} · verifica vigencia y contenido en el sitio original</p>
-                        <div className="mt-4 flex flex-wrap items-center gap-3">
-                          <a href={source.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-sm font-semibold text-[#173f6b] hover:underline">
-                            Abrir fuente original <ExternalLink className="size-3.5" />
-                          </a>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            disabled={savedSourceIds.has(source.id)}
-                            onClick={() => addOfficialSource(source)}
-                          >
-                            {savedSourceIds.has(source.id) ? <Check className="size-3.5" /> : <Plus className="size-3.5" />}
-                            {savedSourceIds.has(source.id) ? "En el expediente" : "Agregar al expediente"}
-                          </Button>
-                        </div>
-                      </div>
-                    </div>
-                  </article>
-                ))}
-
-                {filteredElements.map((element) => (
-                  <article key={element.id} className="rounded-xl border border-slate-200 bg-white p-5">
-                    <div className="flex items-start gap-4">
-                      <div className="grid size-10 shrink-0 place-items-center rounded-lg bg-slate-50 text-slate-600">
-                        {activeSection === "personas" ? <Users className="size-5" /> : activeSection === "fechas" ? <CalendarDays className="size-5" /> : activeSection === "pruebas" ? <Paperclip className="size-5" /> : activeSection === "normas" ? <Landmark className="size-5" /> : <ClipboardCheck className="size-5" />}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <h2 className="font-semibold text-slate-900">{element.title}</h2>
-                          <Badge variant="outline" className={`rounded-md text-[10px] ${element.status === "listo" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"}`}>
-                            {activeSection === "normas" ? "En el expediente" : element.status === "listo" ? "Confirmado" : "Por confirmar"}
-                          </Badge>
-                        </div>
-                        <p className="mt-2 text-sm leading-6 text-slate-600">{element.detail}</p>
-                        {element.date && <p className="mt-3 text-xs font-medium text-slate-500">Fecha: {element.date}</p>}
-                        {element.sourceUrl && (
-                          <a href={element.sourceUrl} target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-1.5 text-sm font-semibold text-[#173f6b] hover:underline">
-                            Abrir fuente guardada <ExternalLink className="size-3.5" />
-                          </a>
-                        )}
-                        {element.status !== "listo" && (
-                          <Button variant="outline" size="sm" className="mt-4" onClick={() => confirmElement(element.id)}>
-                            <Check className="size-3.5" /> Confirmar dato
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-                  </article>
-                ))}
-
-                {filteredElements.length === 0 && activeSection !== "normas" && (
-                  <div className="grid min-h-64 place-items-center rounded-2xl border border-dashed border-slate-300 bg-white/60 p-8 text-center">
-                    <div>
-                      <div className="mx-auto grid size-11 place-items-center rounded-xl bg-slate-100 text-slate-500">
-                        <Plus className="size-5" />
-                      </div>
-                      <p className="mt-4 font-semibold text-slate-800">Aún no hay piezas aquí</p>
-                      <p className="mt-1 text-sm text-slate-500">Agrega lo que ya tengas. Te mostraremos qué hace falta.</p>
-                      <Button className="mt-4 bg-[#173f6b] text-white hover:bg-[#102f51]" onClick={() => setAddOpen(true)}>
-                        Agregar primera pieza
-                      </Button>
+            {activeSection === "expediente" && (
+              <div className="space-y-6">
+                <section className="flex flex-col gap-4 rounded-2xl border border-slate-200 bg-white p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-900">Un expediente que se adapta a tu caso</p>
+                    <p className="mt-1 text-sm leading-6 text-slate-500">Agrega bloques sugeridos o crea uno propio. Tú decides qué incorporar y qué confirmar.</p>
+                    <div className="mt-3 flex items-center gap-3 text-xs text-slate-500">
+                      <span>{elements.length} bloques</span>
+                      <span aria-hidden="true">·</span>
+                      <span>{completeness}% de tipos cubiertos</span>
                     </div>
                   </div>
+                  <Button onClick={openCustomBlock} className="bg-[#173f6b] text-white hover:bg-[#102f51]">
+                    <Plus className="size-4" /> Crear bloque propio
+                  </Button>
+                </section>
+
+                {caseSuggestions.length > 0 && (
+                  <section>
+                    <div className="mb-3">
+                      <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Sugerencias según tu relato</p>
+                      <h2 className="mt-1 font-serif text-2xl font-semibold text-[#102238]">Completa lo que puede cambiar la ruta</h2>
+                    </div>
+                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                      {caseSuggestions.map((suggestion) => (
+                        <article key={suggestion.id} className="flex flex-col rounded-xl border border-slate-200 bg-white p-4">
+                          <div className="flex items-center justify-between gap-3">
+                            <Badge variant="outline" className="rounded-md text-[10px]">{typeLabels[suggestion.type]}</Badge>
+                            <span className="text-[10px] font-bold text-emerald-700">SUGERIDO</span>
+                          </div>
+                          <h3 className="mt-3 text-sm font-semibold text-slate-900">{suggestion.title}</h3>
+                          <p className="mt-2 flex-1 text-xs leading-5 text-slate-600">{suggestion.reason}</p>
+                          <Button variant="outline" size="sm" className="mt-4 w-full text-[#173f6b]" onClick={() => openSuggestedBlock(suggestion)}>
+                            <Plus className="size-3.5" /> Agregar y completar
+                          </Button>
+                        </article>
+                      ))}
+                    </div>
+                  </section>
+                )}
+
+                <section>
+                  <div className="mb-3 flex items-end justify-between gap-4">
+                    <div>
+                      <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Lo que ya agregaste</p>
+                      <h2 className="mt-1 font-serif text-2xl font-semibold text-[#102238]">Bloques de tu expediente</h2>
+                    </div>
+                  </div>
+                  <div className="grid gap-3 md:grid-cols-2">
+                    {elements.map((element) => (
+                      <article key={element.id} className="rounded-xl border border-slate-200 bg-white p-5">
+                        <div className="flex items-start gap-4">
+                          <div className="grid size-10 shrink-0 place-items-center rounded-lg bg-slate-50 text-slate-600">
+                            {element.type === "personas" ? <Users className="size-5" /> : element.type === "fechas" ? <CalendarDays className="size-5" /> : element.type === "pruebas" ? <Paperclip className="size-5" /> : element.type === "normas" ? <Landmark className="size-5" /> : <ClipboardCheck className="size-5" />}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <h3 className="font-semibold text-slate-900">{element.title}</h3>
+                              <Badge variant="outline" className={`rounded-md text-[10px] ${element.status === "listo" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"}`}>
+                                {element.status === "listo" ? "Confirmado" : "Por confirmar"}
+                              </Badge>
+                            </div>
+                            <p className="mt-2 text-sm leading-6 text-slate-600">{element.detail}</p>
+                            <p className="mt-3 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400">{typeLabels[element.type]}</p>
+                            {element.date && <p className="mt-2 text-xs font-medium text-slate-500">Fecha: {element.date}</p>}
+                            {element.sourceUrl && (
+                              <a href={element.sourceUrl} target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-1.5 text-sm font-semibold text-[#173f6b] hover:underline">
+                                Abrir fuente guardada <ExternalLink className="size-3.5" />
+                              </a>
+                            )}
+                            {element.status !== "listo" && (
+                              <Button variant="outline" size="sm" className="mt-4" onClick={() => confirmElement(element.id)}>
+                                <Check className="size-3.5" /> Confirmar bloque
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                </section>
+
+                {suggestedSources.length > 0 && (
+                  <section className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6">
+                    <div className="mb-4">
+                      <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Trazabilidad</p>
+                      <h2 className="mt-1 font-serif text-2xl font-semibold text-[#102238]">Fuentes oficiales sugeridas</h2>
+                      <p className="mt-1 text-sm text-slate-500">Ábrelas y verifica su vigencia antes de actuar; puedes guardarlas como bloques del expediente.</p>
+                    </div>
+                    <div className="grid gap-3 md:grid-cols-2">
+                      {suggestedSources.map((source) => (
+                        <article key={source.id} className="rounded-xl border border-slate-200 p-4">
+                          <div className="flex items-start gap-3">
+                            <Landmark className="mt-0.5 size-4 shrink-0 text-indigo-600" />
+                            <div className="min-w-0">
+                              <h3 className="text-sm font-semibold text-slate-900">{source.shortTitle}</h3>
+                              <p className="mt-1 text-xs leading-5 text-slate-600">{source.organization}</p>
+                              <div className="mt-3 flex flex-wrap gap-2">
+                                <a href={source.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs font-semibold text-[#173f6b] hover:underline">
+                                  Abrir original <ExternalLink className="size-3" />
+                                </a>
+                                <button onClick={() => addOfficialSource(source)} className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700 hover:underline">
+                                  <Plus className="size-3" /> Guardar como bloque
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  </section>
                 )}
               </div>
             )}
 
-            {activeSection === "documentos" && (
-              <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_240px]">
-                <div className="rounded-xl border border-slate-200 bg-white p-5 sm:p-7">
-                  <div className="mb-6 flex items-center justify-between border-b border-slate-100 pb-4">
-                    <div>
-                      <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">Vista previa del borrador</p>
-                      <h2 className="mt-1 font-serif text-xl font-semibold text-[#102238]">{orientation.recommendedDocument}</h2>
+            {activeSection === "resultados" && (
+              <div className="space-y-6">
+                <section>
+                  <div className="mb-4">
+                    <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Salidas reutilizables</p>
+                    <h2 className="mt-1 font-serif text-2xl font-semibold text-[#102238]">Lo que obtienes con tu expediente</h2>
+                    <p className="mt-1 text-sm text-slate-500">Cada resultado muestra su estado y la acción necesaria para terminarlo.</p>
+                  </div>
+                  <div className="grid gap-3 md:grid-cols-2">
+                    {caseOutputs.map((output) => (
+                      <article key={output.id} className="flex flex-col rounded-xl border border-slate-200 bg-white p-5">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="grid size-10 place-items-center rounded-lg bg-slate-50 text-[#173f6b]">
+                            <FileCheck2 className="size-5" />
+                          </div>
+                          <Badge variant="outline" className={`rounded-md text-[10px] ${output.status === "listo" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : output.status === "en-proceso" ? "border-sky-200 bg-sky-50 text-sky-700" : "border-slate-200 bg-slate-50 text-slate-600"}`}>
+                            {output.status === "listo" ? "Listo" : output.status === "en-proceso" ? "En proceso" : "Pendiente"}
+                          </Badge>
+                        </div>
+                        <h3 className="mt-4 font-semibold text-slate-900">{output.title}</h3>
+                        <p className="mt-2 flex-1 text-sm leading-6 text-slate-600">{output.detail}</p>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="mt-4 w-full text-[#173f6b]"
+                          onClick={() => {
+                            if (output.id === "ruta") setActiveSection("ruta");
+                            else if (output.id === "borrador") setDocumentOpen(true);
+                            else if (output.id === "carpeta") downloadCaseFile();
+                            else setActiveSection("expediente");
+                          }}
+                        >
+                          {output.actionLabel} <ArrowRight className="size-3.5" />
+                        </Button>
+                      </article>
+                    ))}
+                  </div>
+                </section>
+
+                <section className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_260px]">
+                  <div className="rounded-xl border border-slate-200 bg-white p-5 sm:p-7">
+                    <div className="mb-6 flex items-center justify-between border-b border-slate-100 pb-4">
+                      <div>
+                        <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">Vista previa del borrador</p>
+                        <h2 className="mt-1 font-serif text-xl font-semibold text-[#102238]">{orientation.recommendedDocument}</h2>
+                      </div>
+                      <Badge variant="outline" className={`rounded-md ${isSummaryDocument ? "border-sky-200 bg-sky-50 text-sky-700" : "border-amber-200 bg-amber-50 text-amber-700"}`}>
+                        {isSummaryDocument ? "Resumen informativo" : "Requiere revisión"}
+                      </Badge>
                     </div>
-                    <Badge variant="outline" className={`rounded-md ${isSummaryDocument ? "border-sky-200 bg-sky-50 text-sky-700" : "border-amber-200 bg-amber-50 text-amber-700"}`}>
-                      {isSummaryDocument ? "Resumen informativo" : "Completa los campos"}
-                    </Badge>
+                    <div className="max-h-[520px] overflow-auto whitespace-pre-wrap font-serif text-sm leading-7 text-slate-700">
+                      {draftText}
+                    </div>
                   </div>
-                  <div className="max-h-[560px] overflow-auto whitespace-pre-wrap font-serif text-sm leading-7 text-slate-700">
-                    {draftText}
-                  </div>
-                </div>
-                <aside className="space-y-3">
-                  <div className="rounded-xl border border-slate-200 bg-white p-4">
-                    <p className="text-sm font-semibold text-slate-900">Antes de descargar</p>
-                    <ul className="mt-3 space-y-2 text-xs text-slate-600">
-                      {isSummaryDocument ? (
-                        <>
-                          <li className="flex gap-2"><AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-amber-600" /> Revisa que hechos y fechas sean correctos.</li>
-                          <li className="flex gap-2"><AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-amber-600" /> Llévalo a revisión humana antes de actuar.</li>
-                        </>
-                      ) : (
-                        <>
-                          <li className="flex gap-2"><AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-amber-600" /> Completa nombre e identificación.</li>
-                          <li className="flex gap-2"><AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-amber-600" /> Verifica la persona o entidad destinataria.</li>
-                        </>
-                      )}
-                      <li className="flex gap-2">
-                        {evidenceCount > 0 ? <Check className="mt-0.5 size-3.5 shrink-0 text-emerald-600" /> : <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-amber-600" />}
-                        {evidenceCount > 0 ? `${evidenceCount} ${evidenceCount === 1 ? "prueba listada" : "pruebas listadas"}.` : "Aún no agregaste pruebas."}
-                      </li>
-                    </ul>
-                  </div>
-                  <Button className="w-full bg-[#173f6b] text-white hover:bg-[#102f51]" onClick={() => downloadText(draftFilename, draftText)}>
-                    <Download className="size-4" /> Descargar borrador
-                  </Button>
-                  <Button variant="outline" className="w-full" onClick={downloadCaseFile}>
-                    <FolderOpen className="size-4" /> Preparar carpeta
-                  </Button>
-                </aside>
+                  <aside className="space-y-3">
+                    <div className="rounded-xl border border-slate-200 bg-white p-4">
+                      <p className="text-sm font-semibold text-slate-900">Antes de usarlo</p>
+                      <ul className="mt-3 space-y-2 text-xs leading-5 text-slate-600">
+                        <li className="flex gap-2"><AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-amber-600" /> Revisa hechos, fechas, destinatario y solicitudes.</li>
+                        <li className="flex gap-2"><AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-amber-600" /> Este archivo no se radica automáticamente.</li>
+                        <li className="flex gap-2">
+                          {evidenceCount > 0 ? <Check className="mt-0.5 size-3.5 shrink-0 text-emerald-600" /> : <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-amber-600" />}
+                          {evidenceCount > 0 ? `${evidenceCount} ${evidenceCount === 1 ? "prueba registrada" : "pruebas registradas"}.` : "Aún no registraste pruebas."}
+                        </li>
+                      </ul>
+                    </div>
+                    <Button className="w-full bg-[#173f6b] text-white hover:bg-[#102f51]" onClick={() => downloadText(draftFilename, draftText)}>
+                      <Download className="size-4" /> Descargar borrador
+                    </Button>
+                    <Button variant="outline" className="w-full" onClick={downloadCaseFile}>
+                      <FolderOpen className="size-4" /> Descargar carpeta
+                    </Button>
+                  </aside>
+                </section>
               </div>
             )}
 
@@ -1240,134 +1411,6 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
           </div>
         </main>
 
-        <aside className="hidden border-l border-slate-200 bg-[#fbfaf7] 2xl:block">
-          <div className="sticky top-16 h-[calc(100dvh-4rem)] overflow-y-auto px-5 py-7">
-            <div className="mb-5 flex items-center justify-between">
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">Guía para este paso</p>
-                <h2 className="mt-1 font-serif text-xl font-semibold text-[#102238]">Tu orientación</h2>
-              </div>
-              <div className="grid size-8 place-items-center rounded-full bg-emerald-50 text-emerald-700">
-                <Sparkles className="size-4" />
-              </div>
-            </div>
-
-            <div className="space-y-3">
-              <section className="border-l-2 border-indigo-500 bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.05)]">
-                <div className="flex items-center gap-2 text-indigo-700">
-                  <Scale className="size-4" />
-                  <p className="text-[10px] font-bold uppercase tracking-[0.14em]">Tu derecho</p>
-                </div>
-                <h3 className="mt-3 text-sm font-semibold leading-5 text-slate-900">{orientation.rightTitle}</h3>
-                <p className="mt-2 text-xs leading-5 text-slate-600">{orientation.rightExplanation}</p>
-                <div className="mt-3 space-y-1.5">
-                  {sources.map((source) => (
-                    <a key={source.id} href={source.url} target="_blank" rel="noreferrer" className="flex items-center justify-between gap-2 text-xs font-medium text-[#173f6b] hover:underline">
-                      <span className="truncate">{source.shortTitle}</span>
-                      <ExternalLink className="size-3 shrink-0" />
-                    </a>
-                  ))}
-                </div>
-              </section>
-
-              <section className="border-l-2 border-emerald-500 bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.05)]">
-                <div className="flex items-center gap-2 text-emerald-700">
-                  <ArrowRight className="size-4" />
-                  <p className="text-[10px] font-bold uppercase tracking-[0.14em]">Qué hacer ahora</p>
-                </div>
-                <p className="mt-3 text-sm font-semibold text-slate-900">{orientation.nextSteps[0]?.title}</p>
-                <p className="mt-1.5 text-xs leading-5 text-slate-600">{orientation.nextSteps[0]?.detail}</p>
-                <Button variant="outline" size="sm" className="mt-3 h-8 w-full text-xs" onClick={() => setActiveSection("ruta")}>
-                  Ver ruta completa <ChevronRight className="size-3" />
-                </Button>
-              </section>
-
-              <section className="border-l-2 border-amber-500 bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.05)]">
-                <div className="flex items-center gap-2 text-amber-700">
-                  <Building2 className="size-4" />
-                  <p className="text-[10px] font-bold uppercase tracking-[0.14em]">A dónde ir gratis</p>
-                </div>
-                <div className="mt-3 space-y-3">
-                  {orientation.freeHelp.map((help, index) => (
-                    <div key={help.name} className={index > 0 ? "border-t border-slate-100 pt-3" : ""}>
-                      <p className="text-sm font-semibold text-slate-900">{help.name}</p>
-                      <p className="mt-1 text-xs leading-5 text-slate-600">{help.detail}</p>
-                      <p className="mt-1.5 flex items-start gap-1 text-[11px] font-medium text-amber-800">
-                        <MapPin className="mt-0.5 size-3 shrink-0" /> {help.channel}
-                      </p>
-                      {getOfficialSources([help.sourceId])[0] && (
-                        <a
-                          href={getOfficialSources([help.sourceId])[0].url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="mt-2 inline-flex items-center gap-1 text-[11px] font-semibold text-[#173f6b] hover:underline"
-                        >
-                          Ver canal oficial <ExternalLink className="size-3" />
-                        </a>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </section>
-            </div>
-
-            <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-4">
-              <div className="flex items-center justify-between text-xs">
-                <span className="font-medium text-slate-700">Expediente preparado</span>
-                <span className="font-bold text-[#173f6b]">{completeness}%</span>
-              </div>
-              <Progress value={completeness} className="mt-2 h-1.5" />
-              <Button variant="ghost" size="sm" className="mt-2 h-8 w-full justify-between px-0 text-xs text-[#173f6b] hover:bg-transparent" onClick={downloadCaseFile}>
-                Preparar carpeta para revisión <Download className="size-3.5" />
-              </Button>
-            </div>
-          </div>
-        </aside>
-      </div>
-
-      <div className="fixed bottom-4 right-4 z-30 2xl:hidden">
-        <Sheet>
-          <SheetTrigger
-            render={<Button className="rounded-full bg-[#102238] px-4 text-white shadow-xl hover:bg-[#173f6b]" />}
-          >
-            <Sparkles className="size-4 text-emerald-300" /> Ver orientación
-          </SheetTrigger>
-          <SheetContent className="w-full overflow-y-auto bg-[#fbfaf7] sm:max-w-md">
-            <SheetHeader>
-              <SheetTitle className="font-serif text-2xl text-[#102238]">Tu orientación</SheetTitle>
-              <SheetDescription>Se construye con lo que confirmaste y enlaza fuentes oficiales para verificación.</SheetDescription>
-            </SheetHeader>
-            <div className="mt-6 space-y-4">
-              <section className="border-l-2 border-indigo-500 bg-white p-4 shadow-sm">
-                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-indigo-700">Tu derecho</p>
-                <h3 className="mt-2 font-semibold text-slate-900">{orientation.rightTitle}</h3>
-                <p className="mt-2 text-sm leading-6 text-slate-600">{orientation.rightExplanation}</p>
-              </section>
-              <section className="border-l-2 border-emerald-500 bg-white p-4 shadow-sm">
-                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-emerald-700">Qué hacer ahora</p>
-                <p className="mt-2 font-semibold text-slate-900">{orientation.nextSteps[0]?.title}</p>
-                <p className="mt-1 text-sm text-slate-600">{orientation.nextSteps[0]?.detail}</p>
-              </section>
-              <section className="border-l-2 border-amber-500 bg-white p-4 shadow-sm">
-                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-amber-700">A dónde ir gratis</p>
-                {orientation.freeHelp.map((help) => (
-                  <div key={help.name} className="mt-3">
-                    <p className="font-semibold text-slate-900">{help.name}</p>
-                    <p className="mt-1 text-sm text-slate-600">{help.detail}</p>
-                    <p className="mt-2 flex items-start gap-1 text-xs font-medium text-amber-800">
-                      <MapPin className="mt-0.5 size-3 shrink-0" /> {help.channel}
-                    </p>
-                    {getOfficialSources([help.sourceId])[0] && (
-                      <a href={getOfficialSources([help.sourceId])[0].url} target="_blank" rel="noreferrer" className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-[#173f6b] hover:underline">
-                        Ver canal oficial <ExternalLink className="size-3" />
-                      </a>
-                    )}
-                  </div>
-                ))}
-              </section>
-            </div>
-          </SheetContent>
-        </Sheet>
       </div>
 
       <Dialog
@@ -1444,11 +1487,23 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
         </DialogContent>
       </Dialog>
 
-      <Dialog open={addOpen} onOpenChange={setAddOpen}>
+      <Dialog
+        open={addOpen}
+        onOpenChange={(open) => {
+          setAddOpen(open);
+          if (!open) setSelectedSuggestion(null);
+        }}
+      >
         <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle className="font-serif text-2xl text-[#102238]">Agregar una pieza</DialogTitle>
-            <DialogDescription>Guarda un hecho, una persona, una prueba o cualquier dato que ayude a entender tu caso.</DialogDescription>
+            <DialogTitle className="font-serif text-2xl text-[#102238]">
+              {selectedSuggestion ? `Agregar: ${selectedSuggestion.title}` : "Crear un bloque para tu caso"}
+            </DialogTitle>
+            <DialogDescription>
+              {selectedSuggestion
+                ? selectedSuggestion.reason
+                : "Guarda un hecho, una persona, una prueba o cualquier dato que ayude a entender tu caso."}
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
             <div className="space-y-2">
@@ -1467,8 +1522,9 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
               <Input id="element-title" value={newElement.title} onChange={(event) => setNewElement((current) => ({ ...current, title: event.target.value }))} placeholder="Ej. Captura del aviso por WhatsApp" />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="element-detail">Por qué puede servir</Label>
-              <Textarea id="element-detail" value={newElement.detail} onChange={(event) => setNewElement((current) => ({ ...current, detail: event.target.value }))} placeholder="Describe qué muestra o qué ocurrió" />
+              <Label htmlFor="element-detail">Información del bloque</Label>
+              <Textarea id="element-detail" value={newElement.detail} onChange={(event) => setNewElement((current) => ({ ...current, detail: event.target.value }))} placeholder={selectedSuggestion?.prompt ?? "Describe qué muestra o qué ocurrió"} />
+              {selectedSuggestion && <p className="text-xs leading-5 text-slate-500">{selectedSuggestion.prompt}</p>}
             </div>
             <div className="space-y-2">
               <Label htmlFor="element-date">Fecha, si aplica</Label>
@@ -1482,8 +1538,8 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setAddOpen(false)}>Cancelar</Button>
-            <Button disabled={!newElement.title.trim()} onClick={addElement} className="bg-[#173f6b] text-white hover:bg-[#102f51]">
-              <Plus className="size-4" /> Agregar al expediente
+            <Button disabled={!newElement.title.trim() || !newElement.detail.trim()} onClick={addElement} className="bg-[#173f6b] text-white hover:bg-[#102f51]">
+              <Plus className="size-4" /> Agregar bloque
             </Button>
           </DialogFooter>
         </DialogContent>

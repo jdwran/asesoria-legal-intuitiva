@@ -1,63 +1,13 @@
 import type { LegalCategory } from "./legal-data.ts";
 
-export interface StoryTemplateField {
-  key: string;
-  label: string;
-  placeholder: string;
-}
-
 export interface StoryTemplate {
   id: string;
   label: string;
   template: string;
-  fields: StoryTemplateField[];
   category: LegalCategory;
   description: string;
   featured?: boolean;
   alert?: string;
-}
-
-export type StoryTemplateValues = Record<string, string>;
-
-const STORY_TOKEN_PATTERN = /\{\{([a-z][A-Za-z0-9]*)\}\}/g;
-
-export function getStoryTemplateProgress(
-  template: StoryTemplate,
-  values: StoryTemplateValues,
-) {
-  return {
-    completed: template.fields.filter((field) => values[field.key]?.trim()).length,
-    total: template.fields.length,
-  };
-}
-
-export function renderStoryTemplatePreview(
-  template: StoryTemplate,
-  values: StoryTemplateValues,
-) {
-  return template.template.replace(STORY_TOKEN_PATTERN, (token, key: string) => {
-    const value = values[key]?.trim();
-    return value || token;
-  });
-}
-
-export function buildStoryFromTemplate(
-  template: StoryTemplate,
-  values: StoryTemplateValues,
-  optionalDetail = "",
-) {
-  const { completed, total } = getStoryTemplateProgress(template, values);
-  if (completed !== total) return null;
-
-  const story = renderStoryTemplatePreview(template, values).trim();
-  if (STORY_TOKEN_PATTERN.test(story)) {
-    STORY_TOKEN_PATTERN.lastIndex = 0;
-    return null;
-  }
-  STORY_TOKEN_PATTERN.lastIndex = 0;
-
-  const detail = optionalDetail.trim();
-  return detail ? `${story}\n${detail}` : story;
 }
 
 export const storyTemplates: StoryTemplate[] = [
@@ -68,15 +18,7 @@ export const storyTemplates: StoryTemplate[] = [
     description: "Para salarios, liquidación, prima, cesantías u otros pagos laborales pendientes.",
     featured: true,
     template:
-      "Trabajo en {{empresa}} desde {{fechaIngreso}} como {{cargo}}. No me han pagado salario, prestaciones u otro concepto pendiente: {{concepto}}. Ya reclamé y {{resultadoReclamo}}. Tengo {{soporte}} como soporte. Necesito orientación para reclamar lo pendiente y dejar constancia de mi solicitud.",
-    fields: [
-      { key: "empresa", label: "Nombre de la empresa", placeholder: "Ej.: una empresa de mensajería en Cali" },
-      { key: "fechaIngreso", label: "Desde cuándo trabajas ahí", placeholder: "Ej.: marzo de 2025" },
-      { key: "cargo", label: "Tu cargo", placeholder: "Ej.: auxiliar de bodega" },
-      { key: "concepto", label: "Qué no te han pagado y de qué periodo", placeholder: "Ej.: dos salarios, prima y cesantías de junio y julio" },
-      { key: "resultadoReclamo", label: "Qué pasó cuando reclamaste: a quién, cuándo y qué te dijeron", placeholder: "Ej.: escribí a recursos humanos y no respondieron" },
-      { key: "soporte", label: "Qué pruebas tienes", placeholder: "Ej.: chats, turnos y comprobantes de pagos anteriores" },
-    ],
+      "Trabajo o trabajé para [empresa o tipo de empleador, sin datos de identificación] en [municipio], desde [fecha aproximada] como [cargo o labor]. Mi vínculo es o era [contrato escrito / acuerdo verbal / prestación de servicios, según corresponda]. No me han pagado [concepto pendiente y periodo aproximado]. Reclamé por [correo / mensaje / carta / conversación] y [respuesta recibida o “no respondieron”]. Conservo [contrato / chats / turnos / desprendibles / comprobantes / otros soportes]. Necesito orientación para reclamar lo pendiente y dejar constancia de mi solicitud.",
   },
   {
     id: "laboral-despido-liquidacion",
@@ -84,32 +26,16 @@ export const storyTemplates: StoryTemplate[] = [
     category: "laboral",
     description: "Para organizar la terminación, la causa informada y los pagos o documentos faltantes.",
     template:
-      "Mi empleador fue {{empleador}} y el contrato laboral o vínculo funcionaba así: {{relacionLaboral}}. La relación terminó de esta manera: {{terminacion}}. Al finalizar me entregaron {{documentos}} y siguen pendientes {{pendientes}}. Cuento con {{soportes}}. Quiero entender qué debo pedir por escrito y dónde solicitar orientación.",
-    fields: [
-      { key: "empleador", label: "Quién te contrató y dónde trabajabas", placeholder: "Ej.: una empresa de transporte en Itagüí" },
-      { key: "relacionLaboral", label: "Cómo era tu relación de trabajo", placeholder: "Ej.: trabajé nueve meses, con turnos y acuerdo verbal" },
-      { key: "terminacion", label: "Cuándo y cómo terminó, y qué razón te dieron", placeholder: "Ej.: me despidieron por WhatsApp y no explicaron la causa" },
-      { key: "documentos", label: "Qué documentos te entregaron al terminar", placeholder: "Ej.: ninguna carta ni liquidación" },
-      { key: "pendientes", label: "Qué pagos o certificados faltan", placeholder: "Ej.: último salario, liquidación y certificado laboral" },
-      { key: "soportes", label: "Qué pruebas conservas", placeholder: "Ej.: chats, turnos, pagos y nombres de testigos" },
-    ],
+      "Trabajé para [empresa o tipo de empleador, sin datos de identificación] en [municipio] desde [fecha aproximada], realizando [cargo o labor]. Mi contrato laboral o vínculo funcionaba así: [contrato escrito / acuerdo verbal / prestación de servicios, horarios y forma de pago]. La relación terminó el [fecha aproximada] por [carta / mensaje / llamada / conversación] y me indicaron [motivo informado o “no explicaron la causa”]. Me entregaron [carta / liquidación / certificado / ningún documento] y quedaron pendientes [pagos o documentos]. Conservo [contrato / chats / pagos / turnos / testigos / otros soportes]. Quiero saber qué pedir por escrito y dónde buscar orientación.",
   },
   {
     id: "arrendamiento-terminacion",
     label: "Problema con arriendo o entrega del inmueble",
     category: "arrendamiento",
-    description: "Para avisos de terminación, entrega, pagos discutidos o intentos de desalojo.",
+    description: "Para comunicaciones sobre vivienda, entrega, pagos discutidos o acceso al inmueble.",
     featured: true,
     template:
-      "Soy parte de un contrato de arriendo y mi situación es {{rolInmueble}}. El contrato se acordó así: {{contrato}}. El problema actual es {{situacion}}. El aviso o comunicación que recibí o envié dice {{aviso}}. Sobre el canon, servicios y administración: {{pagos}}. Tengo {{soportes}}. Necesito saber qué comunicación enviar y qué ruta seguir sin tomar medidas por la fuerza.",
-    fields: [
-      { key: "rolInmueble", label: "Tu rol y el tipo de inmueble", placeholder: "Ej.: soy arrendatario de una vivienda urbana en Bogotá" },
-      { key: "contrato", label: "Cómo es el contrato y desde cuándo existe", placeholder: "Ej.: contrato escrito desde marzo de 2025" },
-      { key: "situacion", label: "Qué está pasando ahora", placeholder: "Ej.: me piden entregar el inmueble porque lo van a vender" },
-      { key: "aviso", label: "Cuándo, por qué medio y con qué plazo avisaron", placeholder: "Ej.: WhatsApp recibido ayer con plazo de cinco días" },
-      { key: "pagos", label: "Cómo están los pagos y qué valores se discuten", placeholder: "Ej.: estoy al día y conservo todos los recibos" },
-      { key: "soportes", label: "Qué documentos o pruebas tienes", placeholder: "Ej.: contrato, mensajes, inventario y comprobantes" },
-    ],
+      "Soy [arrendatario/a / arrendador/a] de una [vivienda urbana / habitación / otro inmueble de vivienda] en [municipio]. El contrato de arriendo es [escrito / verbal] y comenzó en [fecha aproximada]. El problema actual es [describe en tus palabras lo que ocurrió]. Recibí o envié una comunicación el [fecha aproximada] por [carta / correo / mensaje / conversación], que decía [resumen del mensaje]. Los pagos de canon, servicios y administración están [estado general de los pagos]. Conservo [contrato / recibos / mensajes / inventario / fotos / otros soportes]. Necesito saber qué comunicación enviar y qué ruta seguir sin tomar medidas por la fuerza.",
   },
   {
     id: "salud-servicio-negado",
@@ -117,17 +43,9 @@ export const storyTemplates: StoryTemplate[] = [
     category: "salud",
     description: "Para medicamentos, citas, procedimientos, terapias o autorizaciones demoradas.",
     featured: true,
-    alert: "Si existe una urgencia o deterioro grave, busca atención inmediata antes de completar el formulario.",
+    alert: "Si existe una urgencia o un deterioro grave, busca atención inmediata antes de continuar con el relato.",
     template:
-      "Mi EPS o IPS es {{afiliacion}}. Tengo una orden médica para {{ordenMedica}}. Solicité el servicio de esta forma: {{solicitud}}. La entidad respondió o actuó así: {{respuesta}}. La demora o negativa me afecta de esta manera: {{afectacion}}. Tengo {{soportes}}. Necesito orientación para pedir la atención y escalar la barrera si continúa.",
-    fields: [
-      { key: "afiliacion", label: "EPS, IPS y municipio donde recibes atención", placeholder: "Ej.: EPS Ejemplo e IPS Central en Barranquilla" },
-      { key: "ordenMedica", label: "Qué ordenó el personal de salud y cuándo", placeholder: "Ej.: cirugía de vesícula ordenada el 12 de abril" },
-      { key: "solicitud", label: "Cuándo y por qué canal pediste el servicio", placeholder: "Ej.: radiqué la solicitud el 2 de mayo y tengo número" },
-      { key: "respuesta", label: "Qué respondió la entidad o cuánto ha demorado", placeholder: "Ej.: no ha respondido después de cuatro meses" },
-      { key: "afectacion", label: "Qué riesgo o afectación existe", placeholder: "Ej.: he ido a urgencias por dolor y no puedo trabajar" },
-      { key: "soportes", label: "Qué documentos conservas", placeholder: "Ej.: orden médica, historia, radicado y respuestas" },
-    ],
+      "Estoy afiliado/a a [EPS o régimen] y recibo atención en [municipio]. Un profesional de salud ordenó [medicamento / cita / examen / procedimiento / terapia / otro servicio] el [fecha aproximada]. Lo solicité por [portal / correo / llamada / atención presencial] y tengo [radicado / respuesta / ninguna constancia]. La entidad no entregó el servicio como fue solicitado y ocurrió lo siguiente: [describe la respuesta o la demora]. Esto me afecta así: [consecuencia concreta en tu salud o vida diaria]. Conservo [orden médica / historia / autorización / radicado / respuestas / otros soportes]. Necesito orientación para pedir la atención y escalar la barrera si continúa.",
   },
   {
     id: "familia-cuota-alimentos",
@@ -135,15 +53,7 @@ export const storyTemplates: StoryTemplate[] = [
     category: "familia",
     description: "Para solicitar una cuota, revisar un acuerdo o registrar pagos atrasados.",
     template:
-      "Necesito orientación por una cuota alimentaria para {{beneficiario}}. Sobre acuerdos o decisiones previas: {{acuerdo}}. La falta de pago o necesidad de fijación consiste en {{incumplimiento}}. Los gastos principales son {{gastos}}. La otra persona puede ser ubicada así: {{ubicacion}}. Tengo {{soportes}}. Quiero saber dónde solicitar la fijación o el cumplimiento y qué constancia conservar.",
-    fields: [
-      { key: "beneficiario", label: "Para quién son los alimentos y qué edad tiene", placeholder: "Ej.: mi hija de seis años" },
-      { key: "acuerdo", label: "Si existe acta, acuerdo o decisión previa", placeholder: "Ej.: nunca hemos fijado una cuota por escrito" },
-      { key: "incumplimiento", label: "Qué se dejó de pagar o qué necesitas fijar", placeholder: "Ej.: no aporta desde hace ocho meses" },
-      { key: "gastos", label: "Cuáles son los gastos principales", placeholder: "Ej.: colegio, vivienda, alimentación y salud" },
-      { key: "ubicacion", label: "Municipio o dato general para ubicar a la otra persona", placeholder: "Ej.: vive y trabaja en Pereira" },
-      { key: "soportes", label: "Qué documentos o comprobantes tienes", placeholder: "Ej.: registro civil, recibos, consignaciones y mensajes" },
-    ],
+      "Necesito orientación sobre una cuota alimentaria para [hijo/a menor u otra persona beneficiaria, indicando solo su edad aproximada]. Existe [acta / acuerdo / decisión judicial / ningún acuerdo] desde [fecha aproximada]. La situación actual es [describe lo que se dejó de pagar o lo que necesitas fijar]. Los gastos principales son [alimentación / vivienda / educación / cuidados / transporte / otros] y conservo [registro civil / recibos / consignaciones / mensajes / acta / otros soportes]. La otra persona vive o trabaja en [municipio o dato general, sin ubicación exacta]. Quiero saber dónde solicitar la fijación o el cumplimiento y qué constancia conservar.",
   },
   {
     id: "familia-custodia-visitas",
@@ -151,15 +61,7 @@ export const storyTemplates: StoryTemplate[] = [
     category: "familia",
     description: "Para definir o modificar acuerdos sobre cuidado y contacto con hijos.",
     template:
-      "Necesito definir custodia, cuidado personal o régimen de visitas. La situación de la niña, niño o adolescente es {{menorYCuidado}}. Sobre acuerdos o decisiones previas: {{acuerdo}}. El problema actual es {{problema}}. Ya intenté acordar y {{intentoAcuerdo}}. Sobre seguridad o riesgo: {{seguridad}}. Tengo {{soportes}}. Quiero saber ante qué entidad pedir orientación y cómo dejar un acuerdo verificable.",
-    fields: [
-      { key: "menorYCuidado", label: "Edad, cuidador actual y municipio", placeholder: "Ej.: mi hijo de ocho años vive conmigo en Cali" },
-      { key: "acuerdo", label: "Si existe un acuerdo, acta o decisión previa", placeholder: "Ej.: solo tenemos un acuerdo verbal" },
-      { key: "problema", label: "Qué ocurre con la custodia o las visitas y desde cuándo", placeholder: "Ej.: no respetan los horarios desde junio" },
-      { key: "intentoAcuerdo", label: "Qué intentaste y cuál fue la respuesta", placeholder: "Ej.: propuse un horario por mensaje y no hubo acuerdo" },
-      { key: "seguridad", label: "Si existe violencia o algún riesgo actual", placeholder: "Ej.: no hay violencia ni riesgo actual" },
-      { key: "soportes", label: "Qué documentos o mensajes conservas", placeholder: "Ej.: registro civil, chats y acuerdo anterior" },
-    ],
+      "Necesito orientación sobre [custodia / cuidado personal / visitas] de [niño, niña o adolescente, indicando solo su edad aproximada], que actualmente vive con [madre / padre / familiar / otra persona] en [municipio]. Existe [acuerdo verbal / acta / decisión / ningún acuerdo]. El problema actual es [describe el desacuerdo o incumplimiento] desde [fecha aproximada]. Intenté acordar por [mensaje / conversación / conciliación / otro medio] y [respuesta obtenida o “no hubo acuerdo”]. Sobre su bienestar, [describe cualquier situación relevante o indica que no conoces una afectación]. Conservo [registro civil / chats / acta / decisión / otros soportes]. Quiero saber ante qué entidad pedir orientación y cómo dejar un acuerdo verificable.",
   },
   {
     id: "familia-violencia-proteccion",
@@ -168,32 +70,16 @@ export const storyTemplates: StoryTemplate[] = [
     description: "Para organizar hechos y pedir protección; no propone conciliación como salida automática.",
     alert: "Si hay peligro actual, busca un lugar seguro y llama al 123. La Línea 155 orienta a mujeres víctimas de violencia y la Línea 141 atiende riesgos para menores de edad.",
     template:
-      "Necesito protección por violencia familiar. Mi vínculo familiar o de pareja con la persona involucrada es {{vinculo}}. Los hechos fueron {{hechos}}. Mi seguridad en este momento es {{seguridad}}. Las otras personas que podrían estar en riesgo son {{personasRiesgo}}. Ya busqué ayuda y {{ayudaPrevia}}. Sobre soportes y forma segura de atención: {{soportesYAtencion}}.",
-    fields: [
-      { key: "vinculo", label: "Qué vínculo tienes o tuviste con la persona", placeholder: "Ej.: es mi expareja y ya no vivimos juntos" },
-      { key: "hechos", label: "Qué ocurrió, cuándo y en qué lugar general", placeholder: "Ej.: el sábado me empujó, amenazó y conserva llaves" },
-      { key: "seguridad", label: "Si estás a salvo y si la persona puede acercarse", placeholder: "Ej.: estoy con una familiar, pero temo que vuelva" },
-      { key: "personasRiesgo", label: "Si hay niñas, niños u otras personas expuestas", placeholder: "Ej.: vivo con mis dos hijos" },
-      { key: "ayudaPrevia", label: "A quién pediste ayuda y qué respuesta recibiste", placeholder: "Ej.: aún no he pedido ayuda institucional" },
-      { key: "soportesYAtencion", label: "Qué soportes tienes y cómo puedes recibir orientación segura", placeholder: "Ej.: tengo fotos y mensajes; prefiero atención presencial" },
-    ],
+      "Necesito protección por violencia familiar de mi pareja, expareja u otro familiar [indica el vínculo sin escribir nombres ni datos de identificación]. Los hechos ocurrieron el [fecha o periodo aproximado] en [lugar general] y consistieron en [describe brevemente qué ocurrió]. En este momento [cuenta si estás a salvo y si esa persona puede acercarse]. También podrían estar expuestas [otras personas, sin escribir sus nombres / ninguna otra persona]. Pedí ayuda a [entidad o servicio / nadie todavía] y [respuesta recibida]. Conservo [mensajes / fotos / audios / valoración / testigos / otros soportes]. Necesito orientación para protegerme y saber qué trámite iniciar.",
   },
   {
     id: "penal-hurto-estafa-amenaza",
     label: "Hurto, estafa, amenaza u otro posible delito",
     category: "penal",
-    description: "Para preparar una denuncia con cronología, evidencias y necesidades de protección.",
-    alert: "Si el hecho ocurre ahora o existe peligro, llama al 123 antes de completar el relato.",
+    description: "Para preparar un reporte con cronología, evidencias y necesidades de protección.",
+    alert: "Si el hecho ocurre ahora o existe peligro, llama al 123 antes de continuar con el relato.",
     template:
-      "Quiero poner en conocimiento un posible delito. Ocurrió {{momentoLugar}}. El hecho fue {{hecho}}. Las personas involucradas o testigos son {{involucrados}}. La pérdida, afectación o riesgo es {{afectacion}}. Conservé {{evidencia}}. Sobre la denuncia: {{denuncia}}. Necesito organizar el relato, saber dónde presentarlo y qué número o constancia guardar.",
-    fields: [
-      { key: "momentoLugar", label: "Cuándo y dónde ocurrió", placeholder: "Ej.: el 10 de agosto en una página de ventas, desde Medellín" },
-      { key: "hecho", label: "Qué pasó, en orden y sin completar lo que no recuerdes", placeholder: "Ej.: ofrecieron un celular, transferí y luego me bloquearon" },
-      { key: "involucrados", label: "Quiénes participaron o presenciaron el hecho", placeholder: "Ej.: conservo el perfil del vendedor y no conozco testigos" },
-      { key: "afectacion", label: "Qué pérdida, daño o riesgo existe", placeholder: "Ej.: transferí un valor y nunca recibí el equipo" },
-      { key: "evidencia", label: "Qué evidencias originales conservas", placeholder: "Ej.: comprobante, chats, URL y capturas" },
-      { key: "denuncia", label: "Si ya informaste a alguna entidad y qué número recibiste", placeholder: "Ej.: aún no he denunciado ni reportado al banco" },
-    ],
+      "Quiero poner en conocimiento un posible delito. Ocurrió el [fecha aproximada] en [lugar general / plataforma digital] y pasó así: [cuenta la secuencia breve en orden, sin completar lo que no recuerdes]. Las personas involucradas o testigos son [relación o descripción general, sin datos sensibles / no los conozco]. La pérdida, afectación o preocupación fue [valor aproximado / bien / lesión / otra consecuencia]. Conservo [comprobante / chats / capturas / audios / fotos / enlace / serial / otros soportes]. Ya informé a [banco / plataforma / Policía / Fiscalía / nadie] y [respuesta o número recibido]. Necesito organizar el relato, saber dónde presentarlo y qué constancia guardar.",
   },
   {
     id: "administrativo-multa-resolucion",
@@ -202,14 +88,7 @@ export const storyTemplates: StoryTemplate[] = [
     description: "Para revisar una decisión administrativa, su notificación y los recursos indicados.",
     alert: "Una petición genérica no suspende automáticamente el término de un recurso. Busca revisión humana si la fecha está próxima.",
     template:
-      "Una entidad pública expidió un acto administrativo: {{acto}}. La notificación ocurrió así: {{notificacion}}. El documento dice esto sobre recursos y términos: {{recursos}}. Solicito que revisen {{motivo}}. Tengo {{soportes}}. Necesito identificar la actuación correcta, la autoridad que la recibe y el comprobante que debo conservar.",
-    fields: [
-      { key: "acto", label: "Qué entidad expidió qué decisión", placeholder: "Ej.: la Secretaría de Movilidad expidió un comparendo" },
-      { key: "notificacion", label: "Cuándo y cómo te notificaron o cómo te enteraste", placeholder: "Ej.: nunca me notificaron; lo vi al renovar la licencia" },
-      { key: "recursos", label: "Qué recursos y término aparecen escritos", placeholder: "Ej.: menciona reposición, pero no entiendo el plazo" },
-      { key: "motivo", label: "Qué hecho, dato o decisión concreta debe revisarse", placeholder: "Ej.: el vehículo ya estaba traspasado para esa fecha" },
-      { key: "soportes", label: "Qué documentos y constancias conservas", placeholder: "Ej.: resolución, contrato de venta y formulario de traspaso" },
-    ],
+      "Una entidad pública, [nombre de la entidad], emitió un acto administrativo relacionado con [asunto general]. Me notificaron o me enteré el [fecha aproximada] por [correo / carta / plataforma / visita / consulta propia], o [explica si no recibiste notificación]. El documento menciona [reposición / apelación / otro recurso / ningún recurso visible] y el término escrito dice [copia sus palabras exactas sin calcularlo]. No estoy de acuerdo porque [hecho, dato o decisión que debe revisarse]. Ya presenté [petición / recurso / pago / ninguna gestión] y [respuesta recibida]. Conservo [acto / constancia de notificación / soportes / comunicaciones]. Necesito identificar la actuación correcta y el comprobante que debo conservar.",
   },
   {
     id: "judicial-notificacion",
@@ -218,14 +97,7 @@ export const storyTemplates: StoryTemplate[] = [
     description: "Para organizar una notificación antes de buscar revisión jurídica urgente.",
     alert: "No uses este ejemplo de relato para contestar el proceso. Conserva todo y solicita revisión humana cuanto antes.",
     template:
-      "Recibí una notificación de un juzgado. La recepción ocurrió así: {{recepcion}}. El despacho y la actuación indicados son {{despachoActuacion}}. El radicado, audiencia o término escrito dicen {{radicadoTermino}}. Los documentos recibidos son {{documentos}}. Hasta ahora {{estadoActual}}. Necesito preparar la carpeta completa y encontrar revisión jurídica urgente; este relato no reemplaza la contestación ni suspende ningún plazo.",
-    fields: [
-      { key: "recepcion", label: "Cuándo, a qué hora y por qué medio recibiste el documento", placeholder: "Ej.: ayer a las 4 p. m. dejaron un sobre en portería" },
-      { key: "despachoActuacion", label: "Qué juzgado y qué tipo de actuación aparecen", placeholder: "Ej.: juzgado civil y demanda por una deuda" },
-      { key: "radicadoTermino", label: "Radicado y fechas o términos tal como están escritos", placeholder: "Ej.: radicado completo y texto que menciona diez días" },
-      { key: "documentos", label: "Qué documento principal y anexos recibiste", placeholder: "Ej.: demanda, mandamiento y tres anexos" },
-      { key: "estadoActual", label: "Qué has hecho y qué necesitas revisar", placeholder: "Ej.: no he respondido y necesito saber a quién acudir hoy" },
-    ],
+      "Recibí una notificación de [juzgado o despacho] el [fecha y hora aproximadas] por [correo / carta / aviso / sobre / otro medio]. El documento parece corresponder a [demanda / mandamiento / citación / audiencia / otra actuación] y mi relación es [demandante / demandado/a / tercero/a / no estoy seguro/a]. El radicado y cualquier fecha o término dicen [copia tal como aparecen, sin calcularlos]. Recibí [documento principal y anexos] y hasta ahora [no he respondido / consulté el proceso / busqué ayuda / otra actuación]. Necesito preparar la carpeta completa y encontrar revisión jurídica urgente; este relato no reemplaza una contestación ni suspende ningún término.",
   },
 ];
 

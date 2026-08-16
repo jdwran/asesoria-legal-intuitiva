@@ -12,14 +12,6 @@ import {
 
 import { Button } from "@/components/ui/button";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -27,7 +19,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Progress } from "@/components/ui/progress";
 import { Textarea } from "@/components/ui/textarea";
 import {
   EXTERNAL_PROCESSING_COPY,
@@ -37,27 +28,13 @@ import {
   isOrientationFormReady,
 } from "@/lib/orientation-form";
 import {
-  buildStoryFromTemplate,
   featuredStoryTemplates,
   getStoryTemplate,
-  getStoryTemplateProgress,
-  renderStoryTemplatePreview,
   storyTemplates,
   type StoryTemplate,
-  type StoryTemplateValues,
 } from "@/lib/story-templates";
 
 const moreStoryTemplates = storyTemplates.filter((template) => !template.featured);
-
-const categoryLabels = {
-  arrendamiento: "Vivienda",
-  laboral: "Trabajo",
-  salud: "Salud",
-  familia: "Familia",
-  penal: "Seguridad",
-  administrativo: "Entidades públicas",
-  otro: "Judicial",
-} as const;
 
 type LegalEmptyStateProps = {
   accountIndicator?: ReactNode;
@@ -71,33 +48,6 @@ type LegalEmptyStateProps = {
   onConsentChange: (processingConsent: boolean) => void;
   onSubmit: (finalStory: string) => void | Promise<void>;
 };
-
-function TemplatePreviewText({
-  template,
-  values,
-}: {
-  template: StoryTemplate;
-  values: StoryTemplateValues;
-}) {
-  const preview = renderStoryTemplatePreview(template, values);
-  const fieldLabels = new Map(template.fields.map((field) => [field.key, field.label]));
-
-  return preview.split(/(\{\{[a-z][A-Za-z0-9]*\}\})/g).map((part, index) => {
-    const token = part.match(/^\{\{([a-z][A-Za-z0-9]*)\}\}$/);
-    if (!token) return <span key={`${index}-${part.slice(0, 12)}`}>{part}</span>;
-
-    const key = token[1];
-    return (
-      <span
-        key={`${index}-${key}`}
-        title={fieldLabels.get(key)}
-        className="mx-0.5 inline rounded bg-slate-100 px-1.5 py-0.5 font-medium text-slate-400"
-      >
-        {part}
-      </span>
-    );
-  });
-}
 
 export function LegalEmptyState({
   accountIndicator,
@@ -115,25 +65,17 @@ export function LegalEmptyState({
   const [storyTouched, setStoryTouched] = useState(false);
   const [cityTouched, setCityTouched] = useState(false);
   const [consentTouched, setConsentTouched] = useState(false);
-  const [templateOpen, setTemplateOpen] = useState(false);
-  const [selectedTemplate, setSelectedTemplate] = useState<StoryTemplate | null>(null);
   const [appliedTemplateId, setAppliedTemplateId] = useState<string | null>(null);
-  const [templateValues, setTemplateValues] = useState<StoryTemplateValues>({});
-  const [templateDraftValues, setTemplateDraftValues] = useState<StoryTemplateValues>({});
   const [optionalDetail, setOptionalDetail] = useState("");
 
   const appliedTemplate = appliedTemplateId ? getStoryTemplate(appliedTemplateId) : undefined;
-  const baseStory = appliedTemplate
-    ? buildStoryFromTemplate(appliedTemplate, templateValues) ?? ""
-    : story.trim();
+  const baseStory = story.trim();
   const optionalDetailLimit = Math.max(
     0,
     ORIENTATION_FORM_LIMITS.storyMax - baseStory.length - (baseStory ? 1 : 0),
   );
   const effectiveOptionalDetail = optionalDetail.slice(0, optionalDetailLimit);
-  const finalStory = appliedTemplate
-    ? buildStoryFromTemplate(appliedTemplate, templateValues, effectiveOptionalDetail) ?? ""
-    : [story.trim(), effectiveOptionalDetail.trim()].filter(Boolean).join("\n");
+  const finalStory = [baseStory, effectiveOptionalDetail.trim()].filter(Boolean).join("\n");
   const storyIsValid = baseStory.length >= ORIENTATION_FORM_LIMITS.storyMin;
   const cityIsValid = city.trim().length >= ORIENTATION_FORM_LIMITS.cityMin;
   const canSubmit =
@@ -143,44 +85,36 @@ export function LegalEmptyState({
   const showConsentError = consentTouched && !processingConsent;
   const showCityGuidance = storyIsValid && !cityIsValid && !cityTouched;
   const showConsentGuidance = storyIsValid && cityIsValid && !processingConsent && !consentTouched;
-  const templateProgress = selectedTemplate
-    ? getStoryTemplateProgress(selectedTemplate, templateDraftValues)
-    : { completed: 0, total: 0 };
-  const templateDraftStory = selectedTemplate
-    ? buildStoryFromTemplate(selectedTemplate, templateDraftValues)
-    : null;
-  const templateDraftIsValid = Boolean(
-    templateDraftStory && templateDraftStory.length <= ORIENTATION_FORM_LIMITS.storyMax,
-  );
 
-  function openTemplateEditor(template: StoryTemplate) {
-    setSelectedTemplate(template);
-    setTemplateDraftValues(
-      appliedTemplateId === template.id ? { ...templateValues } : {},
-    );
-    setTemplateOpen(true);
-  }
+  function applyStoryExample(template: StoryTemplate) {
+    const hasDifferentStory = Boolean(story.trim() && story.trim() !== template.template);
+    if (
+      hasDifferentStory &&
+      !window.confirm("Ya tienes un relato escrito. ¿Quieres reemplazarlo con este ejemplo editable?")
+    ) {
+      return;
+    }
 
-  function applyTemplate() {
-    if (!selectedTemplate || !templateDraftIsValid) return;
-    const nextStory = buildStoryFromTemplate(selectedTemplate, templateDraftValues);
-    if (!nextStory) return;
-    setTemplateValues({ ...templateDraftValues });
-    onStoryChange(nextStory);
-    setAppliedTemplateId(selectedTemplate.id);
-    setStoryTouched(true);
-    setTemplateOpen(false);
+    onStoryChange(template.template);
+    setAppliedTemplateId(template.id);
+    setStoryTouched(false);
+    window.requestAnimationFrame(() => {
+      const textarea = textareaRef.current;
+      if (!textarea) return;
+      textarea.focus();
+      const firstOpeningBracket = template.template.indexOf("[");
+      const firstClosingBracket = template.template.indexOf("]", firstOpeningBracket + 1);
+      const selectionStart = firstOpeningBracket >= 0 ? firstOpeningBracket : template.template.length;
+      const selectionEnd = firstClosingBracket >= selectionStart ? firstClosingBracket + 1 : selectionStart;
+      textarea.setSelectionRange(selectionStart, selectionEnd);
+    });
   }
 
   function clearStory() {
-    setSelectedTemplate(null);
     setAppliedTemplateId(null);
-    setTemplateValues({});
-    setTemplateDraftValues({});
     setOptionalDetail("");
     setStoryTouched(false);
     onStoryChange("");
-    setTemplateOpen(false);
     window.requestAnimationFrame(() => {
       const textarea = textareaRef.current;
       if (!textarea) return;
@@ -231,7 +165,7 @@ export function LegalEmptyState({
                 Empieza tu relato con un ejemplo
               </h2>
               <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                Elige un caso parecido y responde unas preguntas breves para construir tu relato.
+                Elige un caso parecido y ajusta libremente el texto a lo que te ocurrió.
               </p>
             </div>
 
@@ -242,7 +176,7 @@ export function LegalEmptyState({
                   type="button"
                   variant="outline"
                   disabled={isAnalyzing}
-                  onClick={() => openTemplateEditor(template)}
+                  onClick={() => applyStoryExample(template)}
                   title={template.description}
                   className="h-auto min-h-11 whitespace-normal rounded-full border-[#173f6b]/20 bg-[#fbfaf7] px-4 py-2.5 text-left text-[#102238] shadow-sm hover:border-[#173f6b]/40 hover:bg-white"
                 >
@@ -274,7 +208,7 @@ export function LegalEmptyState({
                   {moreStoryTemplates.map((template) => (
                     <DropdownMenuItem
                       key={template.id}
-                      onClick={() => openTemplateEditor(template)}
+                      onClick={() => applyStoryExample(template)}
                       className="min-h-14 items-start whitespace-normal px-3 py-2.5 text-[#102238]"
                     >
                       <FileText className="mt-0.5 size-4 shrink-0 text-emerald-700" />
@@ -311,49 +245,52 @@ export function LegalEmptyState({
                 </Label>
                 <span className="text-[11px] tabular-nums text-muted-foreground">{finalStory.length}/{ORIENTATION_FORM_LIMITS.storyMax}</span>
               </div>
-              {appliedTemplate ? (
-                <div
-                  id="empty-story"
-                  aria-readonly="true"
-                  aria-invalid={showStoryError || undefined}
-                  aria-describedby={showStoryError ? "empty-story-error" : undefined}
-                  className="min-h-28 rounded-lg border border-slate-200 bg-white px-3 py-3 text-[15px] leading-6 shadow-sm"
-                >
-                  <TemplatePreviewText template={appliedTemplate} values={templateValues} />
-                </div>
-              ) : (
-                <Textarea
-                  ref={textareaRef}
-                  id="empty-story"
-                  name="story"
-                  value={story}
-                  onChange={(event) => onStoryChange(event.target.value)}
-                  onBlur={() => setStoryTouched(true)}
-                  disabled={isAnalyzing}
-                  required
-                  aria-required="true"
-                  minLength={ORIENTATION_FORM_LIMITS.storyMin}
-                  maxLength={ORIENTATION_FORM_LIMITS.storyMax}
-                  rows={4}
-                  aria-invalid={showStoryError || undefined}
-                  aria-describedby={showStoryError ? "empty-story-error" : undefined}
-                  placeholder="Escribe aquí tu problema o elige un ejemplo de relato arriba…"
-                  className="h-24 max-h-36 resize-none overflow-y-auto bg-white px-3 py-3 text-base leading-6 shadow-sm [field-sizing:fixed] sm:h-28"
-                />
-              )}
+              <Textarea
+                ref={textareaRef}
+                id="empty-story"
+                name="story"
+                value={story}
+                onChange={(event) => {
+                  onStoryChange(event.target.value);
+                  if (!event.target.value.trim()) setAppliedTemplateId(null);
+                }}
+                onBlur={() => setStoryTouched(true)}
+                disabled={isAnalyzing}
+                required
+                aria-required="true"
+                minLength={ORIENTATION_FORM_LIMITS.storyMin}
+                maxLength={ORIENTATION_FORM_LIMITS.storyMax}
+                rows={7}
+                aria-invalid={showStoryError || undefined}
+                aria-describedby={showStoryError ? "empty-story-error" : undefined}
+                placeholder="Escribe aquí tu problema o elige un ejemplo de relato arriba…"
+                className="min-h-36 max-h-64 resize-y overflow-y-auto bg-white px-3 py-3 text-base leading-6 shadow-sm"
+              />
               {appliedTemplate && (
-                <div className="mt-2 flex flex-col gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs leading-5 text-emerald-950 sm:flex-row sm:items-center sm:justify-between">
-                  <span><strong>Ejemplo elegido:</strong> {appliedTemplate.label}. El relato se construyó con todas tus respuestas.</span>
+                <div
+                  aria-live="polite"
+                  className="mt-2 flex flex-col gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs leading-5 text-emerald-950 sm:flex-row sm:items-center sm:justify-between"
+                >
+                  <span>
+                    <strong>Ejemplo agregado:</strong> {appliedTemplate.label}. Las indicaciones entre corchetes son opcionales: puedes cambiarlas, borrarlas o dejar solo la información que conozcas.
+                  </span>
                   <span className="flex shrink-0 flex-wrap gap-3">
-                    <button type="button" onClick={() => openTemplateEditor(appliedTemplate)} className="font-semibold text-[#173f6b] hover:underline">
-                      Editar checklist
-                    </button>
                     <button type="button" onClick={clearStory} className="font-semibold text-[#173f6b] hover:underline">
                       Empezar de cero
                     </button>
                   </span>
                 </div>
               )}
+              {appliedTemplate?.alert && (
+                <div className="mt-2 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-950">
+                  <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-700" />
+                  <span>{appliedTemplate.alert}</span>
+                </div>
+              )}
+              <div className="mt-2 flex items-start gap-2 text-xs leading-5 text-muted-foreground">
+                <ShieldCheck className="mt-0.5 size-4 shrink-0 text-emerald-700" />
+                <span>No incluyas cédulas, direcciones exactas, teléfonos, correos personales, contraseñas ni datos bancarios.</span>
+              </div>
               {showStoryError && (
                 <p id="empty-story-error" role="alert" className="mt-1.5 text-xs leading-5 text-rose-700">
                   {ORIENTATION_FORM_ERRORS.story}
@@ -476,130 +413,6 @@ export function LegalEmptyState({
         </form>
       </main>
 
-      <Dialog open={templateOpen} onOpenChange={setTemplateOpen} disablePointerDismissal>
-        <DialogContent className="max-h-[calc(100dvh-1rem)] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden sm:max-w-2xl">
-          <DialogHeader>
-            <div className="mb-1 flex items-center gap-2">
-              <span className="rounded-md bg-emerald-50 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-emerald-700">
-                {selectedTemplate ? categoryLabels[selectedTemplate.category] : "Ejemplo de relato"}
-              </span>
-            </div>
-            <DialogTitle className="pr-8 font-serif text-2xl text-[#102238]">
-              Ejemplo de relato: {selectedTemplate?.label}
-            </DialogTitle>
-            <DialogDescription className="leading-6">
-              Responde todas las preguntas. La vista previa se actualizará mientras completas el checklist.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="min-h-0 space-y-3 overflow-y-auto pr-1">
-            {selectedTemplate?.alert && (
-              <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-950">
-                <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-700" />
-                <span>{selectedTemplate.alert}</span>
-              </div>
-            )}
-
-            {story.trim() && appliedTemplateId !== selectedTemplate?.id && (
-              <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs leading-5 text-sky-900">
-                Ya tienes un relato escrito. Solo el botón de abajo lo reemplazará con este ejemplo.
-              </div>
-            )}
-
-            {selectedTemplate && (
-              <div className="space-y-4">
-                <div>
-                  <div className="mb-2 flex items-center justify-between gap-3">
-                    <Label className="font-semibold text-[#102238]">Vista previa de solo lectura</Label>
-                    <span className="text-[11px] text-muted-foreground">Se completa automáticamente</span>
-                  </div>
-                  <div
-                    aria-live="polite"
-                    aria-label="Vista previa del relato"
-                    className="rounded-xl border border-slate-200 bg-white p-4 text-[15px] leading-7 text-[#102238] shadow-sm"
-                  >
-                    <TemplatePreviewText template={selectedTemplate} values={templateDraftValues} />
-                  </div>
-                </div>
-
-                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                  <div className="mb-2 flex items-center justify-between gap-3 text-xs">
-                    <span className="font-semibold text-[#102238]">Avance del checklist</span>
-                    <span className="tabular-nums text-muted-foreground">
-                      {templateProgress.completed} de {templateProgress.total} completados
-                    </span>
-                  </div>
-                  <Progress
-                    value={templateProgress.total ? (templateProgress.completed / templateProgress.total) * 100 : 0}
-                    aria-label={`${templateProgress.completed} de ${templateProgress.total} campos completados`}
-                    className="h-2"
-                  />
-                </div>
-
-                <div className="space-y-4" aria-label="Preguntas obligatorias del ejemplo">
-                  {selectedTemplate.fields.map((field, index) => {
-                    const value = templateDraftValues[field.key] ?? "";
-                    const complete = Boolean(value.trim());
-                    return (
-                      <div key={field.key}>
-                        <div className="mb-1.5 flex items-start justify-between gap-3">
-                          <Label htmlFor={`template-field-${field.key}`} className="leading-5 text-[#102238]">
-                            {index + 1}. {field.label} <span aria-hidden="true" className="text-rose-600">*</span>
-                          </Label>
-                          <span className={`mt-0.5 text-[10px] font-bold uppercase tracking-[0.08em] ${complete ? "text-emerald-700" : "text-slate-400"}`}>
-                            {complete ? "Completo" : "Pendiente"}
-                          </span>
-                        </div>
-                        <Input
-                          id={`template-field-${field.key}`}
-                          value={value}
-                          onChange={(event) => {
-                            const nextValues = {
-                              ...templateDraftValues,
-                              [field.key]: event.target.value,
-                            };
-                            setTemplateDraftValues(nextValues);
-                          }}
-                          disabled={isAnalyzing}
-                          required
-                          aria-required="true"
-                          placeholder={field.placeholder}
-                          maxLength={800}
-                          autoComplete="off"
-                          className="h-11 bg-white text-base shadow-sm"
-                        />
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            <div className="flex items-start gap-2 rounded-lg bg-slate-50 p-3 text-xs leading-5 text-slate-600">
-              <ShieldCheck className="mt-0.5 size-4 shrink-0 text-emerald-700" />
-              <span>No incluyas cédulas, direcciones exactas, teléfonos, correos personales, contraseñas ni datos bancarios.</span>
-            </div>
-          </div>
-
-          <DialogFooter className="sm:justify-between">
-            <Button type="button" variant="outline" onClick={clearStory}>Empezar de cero</Button>
-            <span className="flex flex-col-reverse gap-2 sm:flex-row">
-              <Button type="button" variant="ghost" onClick={() => setTemplateOpen(false)}>Cancelar</Button>
-            <Button
-              type="button"
-              disabled={!templateDraftIsValid}
-              onClick={applyTemplate}
-              className="bg-[#173f6b] text-white hover:bg-[#102f51]"
-            >
-              <FileText className="size-4" />
-              {story.trim() && appliedTemplateId !== selectedTemplate?.id
-                ? "Reemplazar con este ejemplo"
-                : "Usar este relato"}
-            </Button>
-            </span>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

@@ -926,8 +926,8 @@ Este es un borrador informativo. Revisa los datos y, si es posible, solicita ori
     setNewCaseOpen(true);
   }
 
-  async function analyzeCase() {
-    const cleanStory = story.trim();
+  async function analyzeCase(storyOverride?: string) {
+    const cleanStory = (storyOverride ?? story).trim();
     const cleanCity = city.trim();
     if (cleanStory.length < 12) {
       setFormError(ORIENTATION_FORM_ERRORS.story);
@@ -941,6 +941,7 @@ Este es un borrador informativo. Revisa los datos y, si es posible, solicita ori
       setFormError(ORIENTATION_FORM_ERRORS.consent);
       return;
     }
+    setStory(cleanStory);
     setFormError("");
     setIsAnalyzing(true);
     setNotice("Organizando tu relato…");
@@ -1978,7 +1979,7 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
           </div>
           <DialogFooter className="gap-2 sm:gap-0">
             <Button variant="ghost" onClick={() => setNewCaseOpen(false)}>Cancelar</Button>
-            <Button disabled={!isOrientationFormReady({ story, city, processingConsent }) || isAnalyzing} onClick={analyzeCase} className="bg-[#173f6b] text-white hover:bg-[#102f51]">
+            <Button disabled={!isOrientationFormReady({ story, city, processingConsent }) || isAnalyzing} onClick={() => void analyzeCase()} className="bg-[#173f6b] text-white hover:bg-[#102f51]">
               {isAnalyzing ? <LoaderCircle className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
               {isAnalyzing ? "Organizando tu relato…" : "Ver respuesta preliminar"}
             </Button>

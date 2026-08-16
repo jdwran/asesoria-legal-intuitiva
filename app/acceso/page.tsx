@@ -54,8 +54,7 @@ export default async function AccessPage() {
             Activa el guardado privado de tus sesiones
           </h1>
           <p className="mt-3 text-base leading-7 text-slate-600">
-            Este portal no aparece en la navegación pública. Revisa y acepta la autorización
-            específica antes de crear tu cuenta de almacenamiento.
+            Esta autorización se solicita por separado para guardar y restaurar tu sesión.
           </p>
         </div>
 

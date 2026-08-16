@@ -744,7 +744,7 @@ export function buildFallbackOrientation(
     };
   }
 
-  if (hasAny(story, ["rob", "estaf", "delit", "denunci", "fiscal", "agred", "agresi", "atrac", "hurt", "amenaz"])) {
+  if (hasAny(story, ["robo", "robó", "robar", "robaron", "robado", "estaf", "delit", "denunci", "fiscal", "agred", "agresi", "atrac", "hurt", "amenaz"])) {
     return {
       caseTitle: "Posible hecho que requiere denuncia",
       category: "penal",

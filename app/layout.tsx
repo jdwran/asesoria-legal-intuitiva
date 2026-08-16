@@ -1,11 +1,16 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Geist_Mono, Lora, Nunito_Sans } from "next/font/google";
 import { headers } from "next/headers";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+const nunitoSans = Nunito_Sans({
+  variable: "--font-nunito-sans",
+  subsets: ["latin"],
+});
+
+const lora = Lora({
+  variable: "--font-lora",
   subsets: ["latin"],
 });
 
@@ -64,7 +69,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="es-CO"
-      className={`${geistSans.variable} ${geistMono.variable} min-h-[100dvh] antialiased`}
+      className={`${nunitoSans.variable} ${lora.variable} ${geistMono.variable} min-h-[100dvh] antialiased`}
     >
       <body className="flex min-h-[100dvh] flex-col">
         <TooltipProvider>{children}</TooltipProvider>

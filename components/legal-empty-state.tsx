@@ -146,7 +146,7 @@ export function LegalEmptyState({
 
       <main className="flex min-h-0 flex-1 flex-col">
         <section
-          aria-label="Plantillas de relato"
+          aria-label="Ejemplos de relato"
           className="flex flex-1 items-start overflow-y-auto px-4 py-6 sm:px-6 sm:py-10 sm:[align-items:safe_center]"
         >
           <div className="mx-auto w-full max-w-3xl">
@@ -162,12 +162,12 @@ export function LegalEmptyState({
             )}
 
             <div className="mb-5 text-center sm:text-left">
-              <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-emerald-700">Ejemplos editables</p>
+              <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-emerald-700">Ejemplos de relato</p>
               <h2 className="mt-2 font-serif text-2xl font-semibold tracking-tight text-[#102238] sm:text-3xl">
-                Empieza con un caso parecido al tuyo
+                Empieza tu relato con un ejemplo
               </h2>
               <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                Elige una plantilla, cambia lo que está entre corchetes y borra lo que no aplique.
+                Elige un caso parecido, ajusta lo que está entre corchetes y borra lo que no aplique.
               </p>
             </div>
 
@@ -200,7 +200,7 @@ export function LegalEmptyState({
                     />
                   }
                 >
-                  Ver {moreStoryTemplates.length} plantillas más
+                  Ver {moreStoryTemplates.length} ejemplos más
                   <ChevronDown className="size-4" />
                 </DropdownMenuTrigger>
                 <DropdownMenuContent
@@ -263,12 +263,12 @@ export function LegalEmptyState({
                 rows={4}
                 aria-invalid={showStoryError || undefined}
                 aria-describedby={showStoryError ? "empty-story-error" : undefined}
-                placeholder="Escribe aquí tu problema o elige una plantilla arriba…"
+                placeholder="Escribe aquí tu problema o elige un ejemplo de relato arriba…"
                 className={`${appliedTemplate ? "h-36 max-h-52 sm:h-44" : "h-24 max-h-36 sm:h-28"} resize-none overflow-y-auto bg-white px-3 py-3 text-base leading-6 shadow-sm [field-sizing:fixed]`}
               />
               {appliedTemplate && (
                 <div className="mt-2 flex flex-col gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs leading-5 text-emerald-950 sm:flex-row sm:items-center sm:justify-between">
-                  <span><strong>Plantilla aplicada:</strong> {appliedTemplate.label}. Sigue ajustando los campos entre corchetes.</span>
+                  <span><strong>Ejemplo elegido:</strong> {appliedTemplate.label}. Sigue ajustando tu relato y los campos entre corchetes.</span>
                   <button type="button" onClick={() => openTemplateEditor(appliedTemplate, story)} className="shrink-0 text-left font-semibold text-[#173f6b] hover:underline">
                     Volver a editarla
                   </button>
@@ -372,11 +372,11 @@ export function LegalEmptyState({
           <DialogHeader>
             <div className="mb-1 flex items-center gap-2">
               <span className="rounded-md bg-emerald-50 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-emerald-700">
-                {selectedTemplate ? categoryLabels[selectedTemplate.category] : "Plantilla"}
+                {selectedTemplate ? categoryLabels[selectedTemplate.category] : "Ejemplo de relato"}
               </span>
             </div>
             <DialogTitle className="pr-8 font-serif text-2xl text-[#102238]">
-              Plantilla: {selectedTemplate?.label}
+              Ejemplo de relato: {selectedTemplate?.label}
             </DialogTitle>
             <DialogDescription className="leading-6">
               Edita lo que está entre corchetes, agrega detalles que recuerdes y borra lo que no aplique.
@@ -393,7 +393,7 @@ export function LegalEmptyState({
 
             {story.trim() && (
               <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs leading-5 text-sky-900">
-                Ya tienes un relato escrito. Solo el botón de abajo lo reemplazará con esta versión.
+                Ya tienes un relato escrito. Solo el botón de abajo lo reemplazará con este ejemplo.
               </div>
             )}
 
@@ -428,7 +428,7 @@ export function LegalEmptyState({
               className="bg-[#173f6b] text-white hover:bg-[#102f51]"
             >
               <FileText className="size-4" />
-              {story.trim() ? "Reemplazar con esta plantilla" : "Usar este relato"}
+              {story.trim() ? "Reemplazar con este ejemplo" : "Usar este relato"}
             </Button>
           </DialogFooter>
         </DialogContent>

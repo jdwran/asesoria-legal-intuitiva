@@ -95,7 +95,7 @@ export const storyTemplates: StoryTemplate[] = [
     label: "Recibí una demanda o notificación judicial",
     category: "otro",
     description: "Para organizar una notificación antes de buscar revisión jurídica urgente.",
-    alert: "No uses esta plantilla para contestar el proceso. Conserva todo y solicita revisión humana cuanto antes.",
+    alert: "No uses este ejemplo de relato para contestar el proceso. Conserva todo y solicita revisión humana cuanto antes.",
     story:
       "El [fecha y hora aproximada] recibí por [correo, mensaje, entrega personal u otro medio] un documento de [juzgado o despacho] relacionado con [demanda, audiencia, mandamiento u otra actuación]. El número de radicado que aparece es [radicado] y el documento menciona [fecha de audiencia o término escrito, sin calcularlo]. Recibí [documento principal y anexos / faltan anexos / no estoy seguro] y la notificación fue dirigida a [mi persona o entidad relacionada]. Aún no he presentado una respuesta. Tengo guardados el mensaje, el sobre o constancia y todos los archivos recibidos. Necesito preparar la carpeta completa y encontrar revisión jurídica urgente; entiendo que este relato no reemplaza la contestación ni suspende ningún plazo.",
   },

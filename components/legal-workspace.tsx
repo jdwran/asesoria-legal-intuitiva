@@ -66,6 +66,7 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
+import { PreliminaryOrientation } from "@/components/preliminary-orientation";
 import {
   type CaseBlockSuggestion,
   getCaseOutputs,
@@ -73,10 +74,12 @@ import {
   getSuggestedCaseBlocks,
 } from "@/lib/case-guidance";
 import type { CaseSessionSnapshot } from "@/lib/case-session";
+import { DETAILED_GUIDANCE_ACKNOWLEDGEMENT_VERSION } from "@/lib/detailed-guidance";
 import {
   CaseElement,
   CaseElementType,
   getOfficialSources,
+  getPreliminaryLegalCitations,
   initialElements,
   initialOrientation,
   LegalOrientation,
@@ -350,6 +353,7 @@ function CaseNavigation({
                 return (
                   <button
                     key={item.id}
+                    aria-current={active ? "page" : undefined}
                     onClick={() => {
                       setActiveSection(item.id);
                       onNavigate?.();
@@ -410,6 +414,9 @@ export function LegalWorkspace({ identityAvailable = false }: { identityAvailabl
   const [hasAnalyzedCase, setHasAnalyzedCase] = useState(false);
   const [analysisFallbackUsed, setAnalysisFallbackUsed] = useState(false);
   const [analysisDegraded, setAnalysisDegraded] = useState(false);
+  const [editingPreliminaryStory, setEditingPreliminaryStory] = useState(false);
+  const [detailedGuidanceAcknowledged, setDetailedGuidanceAcknowledged] = useState(false);
+  const [detailedGuidanceAcceptedAt, setDetailedGuidanceAcceptedAt] = useState<string | null>(null);
   const [notice, setNotice] = useState("IA lista para organizar tu caso");
   const [formError, setFormError] = useState("");
   const [triageAnswers, setTriageAnswers] = useState<Record<number, string>>({});
@@ -465,6 +472,9 @@ export function LegalWorkspace({ identityAvailable = false }: { identityAvailabl
     setHasAnalyzedCase(false);
     setAnalysisFallbackUsed(false);
     setAnalysisDegraded(false);
+    setEditingPreliminaryStory(false);
+    setDetailedGuidanceAcknowledged(false);
+    setDetailedGuidanceAcceptedAt(null);
     setNotice("IA lista para organizar tu caso");
     setFormError("");
     setTriageAnswers({});
@@ -477,7 +487,22 @@ export function LegalWorkspace({ identityAvailable = false }: { identityAvailabl
     resetPrivateWorkspace();
   }, [resetPrivateWorkspace]);
 
-  const sources = useMemo(() => getOfficialSources(orientation.sourceIds), [orientation.sourceIds]);
+  const preliminaryLegalCitations = useMemo(
+    () => getPreliminaryLegalCitations(orientation, savedStory),
+    [orientation, savedStory],
+  );
+  const sources = useMemo(
+    () =>
+      [
+        ...new Map(
+          getOfficialSources([
+            ...orientation.sourceIds,
+            ...preliminaryLegalCitations.map((source) => source.id),
+          ]).map((source) => [source.id, source]),
+        ).values(),
+      ],
+    [orientation.sourceIds, preliminaryLegalCitations],
+  );
   const savedSourceIds = useMemo(
     () => new Set(elements.filter((element) => element.type === "normas" && element.sourceId).map((element) => element.sourceId as string)),
     [elements],
@@ -531,6 +556,12 @@ export function LegalWorkspace({ identityAvailable = false }: { identityAvailabl
               Object.entries(triageAnswers).map(([index, answer]) => [String(index), answer]),
             ),
             triageSaved,
+            detailedGuidanceAcknowledgement: detailedGuidanceAcceptedAt
+              ? {
+                  acceptedAt: detailedGuidanceAcceptedAt,
+                  version: DETAILED_GUIDANCE_ACKNOWLEDGEMENT_VERSION,
+                }
+              : undefined,
             analysis: {
               mode: analysisMode,
               provider: analysisProvider,
@@ -547,6 +578,7 @@ export function LegalWorkspace({ identityAvailable = false }: { identityAvailabl
       analysisProvider,
       city,
       completedSteps,
+      detailedGuidanceAcceptedAt,
       elements,
       hasAnalyzedCase,
       orientation,
@@ -684,6 +716,13 @@ export function LegalWorkspace({ identityAvailable = false }: { identityAvailabl
             );
             setTriageAnswers(restoredTriageAnswers);
             setTriageSaved(restoredCase.triageSaved);
+            setDetailedGuidanceAcceptedAt(
+              restoredCase.detailedGuidanceAcknowledgement?.acceptedAt ?? null,
+            );
+            setDetailedGuidanceAcknowledged(
+              Boolean(restoredCase.detailedGuidanceAcknowledgement),
+            );
+            setEditingPreliminaryStory(false);
             setAnalysisMode(restoredCase.analysis.mode);
             setAnalysisProvider(restoredCase.analysis.provider);
             setAnalysisFallbackUsed(restoredCase.analysis.fallbackUsed);
@@ -692,6 +731,8 @@ export function LegalWorkspace({ identityAvailable = false }: { identityAvailabl
             setNotice("Sesión restaurada · tus cambios se guardarán automáticamente");
           } else {
             setHasAnalyzedCase(false);
+            setDetailedGuidanceAcceptedAt(null);
+            setDetailedGuidanceAcknowledged(false);
             setNotice("Borrador restaurado · tus cambios se guardarán automáticamente");
           }
         } else {
@@ -909,6 +950,9 @@ Este es un borrador informativo. Revisa los datos y, si es posible, solicita ori
       setOrientation(result);
       setSavedStory(cleanStory);
       setHasAnalyzedCase(true);
+      setEditingPreliminaryStory(false);
+      setDetailedGuidanceAcknowledged(false);
+      setDetailedGuidanceAcceptedAt(null);
       setAnalysisMode(result.mode === "ai" ? "ai" : "demo");
       setAnalysisProvider(result.provider ?? (result.mode === "ai" ? "openai" : "demo"));
       setAnalysisFallbackUsed(Boolean(result.fallbackUsed));
@@ -942,12 +986,12 @@ Este es un borrador informativo. Revisa los datos y, si es posible, solicita ori
       setNewCaseOpen(false);
       setNotice(
         result.degraded
-          ? "IA no disponible · se mostró una ruta de demostración"
+          ? "IA no disponible · se mostró una respuesta preliminar de demostración"
           : result.provider === "open"
-            ? "Caso organizado con un modelo abierto · revisa lo que entendimos"
+            ? "Respuesta preliminar lista con un modelo abierto"
             : result.fallbackUsed
-              ? "El modelo abierto no respondió · OpenAI organizó el caso"
-              : "Caso organizado con OpenAI · revisa lo que entendimos",
+              ? "El modelo abierto no respondió · respuesta preliminar lista con OpenAI"
+              : "Respuesta preliminar lista con OpenAI",
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : "No pudimos analizar el caso.";
@@ -1051,10 +1095,38 @@ Este es un borrador informativo. Revisa los datos y, si es posible, solicita ori
 
   function goToNextAction() {
     if (needsTriage) {
+      triageSectionRef.current?.focus({ preventScroll: true });
       triageSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
       return;
     }
     setActiveSection("ruta");
+  }
+
+  function continueToDetailedGuidance() {
+    if (!detailedGuidanceAcknowledged) return;
+
+    setDetailedGuidanceAcceptedAt(new Date().toISOString());
+    setActiveSection("resumen");
+    setNotice("Aceptación registrada · análisis detallado habilitado");
+
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        const target = needsTriage ? triageSectionRef.current : resultHeadingRef.current;
+        target?.focus({ preventScroll: true });
+        target?.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    });
+  }
+
+  function editPreliminaryStory() {
+    setStory(savedStory);
+    setProcessingConsent(false);
+    setHasAnalyzedCase(false);
+    setDetailedGuidanceAcknowledged(false);
+    setDetailedGuidanceAcceptedAt(null);
+    setEditingPreliminaryStory(true);
+    setFormError("");
+    setNotice("Edita el relato y vuelve a solicitar una respuesta preliminar");
   }
 
   function toggleStep(index: number) {
@@ -1141,7 +1213,7 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
   if (accountState === "checking") return <AccountSessionLoader />;
   if (accountState === "unavailable") return <AccountSessionUnavailable />;
 
-  if (!hasAnalyzedCase) {
+  if (!hasAnalyzedCase || editingPreliminaryStory) {
     return (
       <LegalEmptyState
         accountIndicator={accountIndicator}
@@ -1163,6 +1235,23 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
           setFormError("");
         }}
         onSubmit={analyzeCase}
+      />
+    );
+  }
+
+  if (!detailedGuidanceAcceptedAt) {
+    return (
+      <PreliminaryOrientation
+        accountIndicator={accountIndicator}
+        orientation={orientation}
+        city={city}
+        citations={preliminaryLegalCitations}
+        analysisMode={analysisMode}
+        analysisDegraded={analysisDegraded}
+        acknowledged={detailedGuidanceAcknowledged}
+        onAcknowledgedChange={setDetailedGuidanceAcknowledged}
+        onContinue={continueToDetailedGuidance}
+        onEditStory={editPreliminaryStory}
       />
     );
   }
@@ -1355,7 +1444,11 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
                 </section>
 
                 {!triageSaved && orientation.triageQuestions.length > 0 && (
-                  <section ref={triageSectionRef} className="scroll-mt-24 rounded-2xl border border-amber-200 bg-[#fffaf0] p-5 sm:p-6">
+                  <section
+                    ref={triageSectionRef}
+                    tabIndex={-1}
+                    className="scroll-mt-24 rounded-2xl border border-amber-200 bg-[#fffaf0] p-5 outline-none sm:p-6"
+                  >
                     <div className="flex items-start gap-3">
                       <div className="grid size-8 shrink-0 place-items-center rounded-lg bg-amber-100 text-amber-700">
                         <Info className="size-4" />
@@ -1887,7 +1980,7 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
             <Button variant="ghost" onClick={() => setNewCaseOpen(false)}>Cancelar</Button>
             <Button disabled={!isOrientationFormReady({ story, city, processingConsent }) || isAnalyzing} onClick={analyzeCase} className="bg-[#173f6b] text-white hover:bg-[#102f51]">
               {isAnalyzing ? <LoaderCircle className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
-              {isAnalyzing ? "Organizando tu relato…" : "Organizar mi caso"}
+              {isAnalyzing ? "Organizando tu relato…" : "Ver respuesta preliminar"}
             </Button>
           </DialogFooter>
         </DialogContent>

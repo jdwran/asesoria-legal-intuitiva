@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { DETAILED_GUIDANCE_ACKNOWLEDGEMENT_VERSION } from "./detailed-guidance.ts";
 import type { CaseElement, LegalOrientation } from "./legal-data.ts";
 import { ORIENTATION_FORM_LIMITS } from "./orientation-form.ts";
 
@@ -19,6 +20,10 @@ export type CaseSessionSnapshot = {
     completedStepIds: string[];
     triageAnswers: Record<string, string>;
     triageSaved: boolean;
+    detailedGuidanceAcknowledgement?: {
+      acceptedAt: string;
+      version: typeof DETAILED_GUIDANCE_ACKNOWLEDGEMENT_VERSION;
+    };
     analysis: {
       mode: "ready" | "demo" | "ai";
       provider: "demo" | "open" | "openai" | null;
@@ -126,6 +131,13 @@ export const caseSessionSnapshotSchema: z.ZodType<CaseSessionSnapshot> = z
         completedStepIds: z.array(z.string().min(1).max(160)).max(100),
         triageAnswers: triageAnswersSchema,
         triageSaved: z.boolean(),
+        detailedGuidanceAcknowledgement: z
+          .object({
+            acceptedAt: z.iso.datetime(),
+            version: z.literal(DETAILED_GUIDANCE_ACKNOWLEDGEMENT_VERSION),
+          })
+          .strict()
+          .optional(),
         analysis: z
           .object({
             mode: z.enum(["ready", "demo", "ai"]),

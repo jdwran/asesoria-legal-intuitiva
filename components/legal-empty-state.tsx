@@ -141,7 +141,7 @@ export function LegalEmptyState({
                 Orientador Legal
               </h1>
               <p className="mt-0.5 text-sm text-muted-foreground">
-                Asesoría gratuita, rápida y en palabras sencillas.
+                Orientación legal gratuita, rápida y en palabras sencillas.
               </p>
             </div>
           </div>
@@ -323,7 +323,7 @@ export function LegalEmptyState({
                 className="h-11 shrink-0 bg-[#173f6b] px-5 text-white hover:bg-[#102f51] sm:self-start"
               >
                 <Send className="size-4" />
-                Enviar relato
+                Ver respuesta preliminar
               </Button>
             </div>
 

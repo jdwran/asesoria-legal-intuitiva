@@ -30,6 +30,9 @@ const orientationSchema = z.object({
     "ley-820",
     "ley-1755",
     "codigo-trabajo",
+    "codigo-trabajo-terminacion",
+    "codigo-comercio-arrendamiento",
+    "codigo-civil-alimentos",
     "ley-2126",
     "legalapp",
     "rama-procesos",
@@ -38,6 +41,18 @@ const orientationSchema = z.object({
     "codigo-general-proceso",
     "decreto-2591",
     "ley-1751",
+    "ley-2452",
+    "codigo-infancia",
+    "codigo-procedimiento-penal",
+    "sentencia-c-426-2023",
+    "sentencia-su-995-1999",
+    "sentencia-c-1507-2000",
+    "sentencia-su-508-2020",
+    "sentencia-t-510-2003",
+    "sentencia-t-462-2018",
+    "sentencia-c-1177-2005",
+    "sentencia-c-980-2010",
+    "sentencia-c-426-2002",
     "sentencias-corte",
     "jurisprudencia-rama",
     "casas-justicia",
@@ -302,6 +317,15 @@ export async function POST(request: Request) {
     id: source.id,
     title: source.title,
     organization: source.organization,
+    legal: source.legal
+      ? {
+          kind: source.legal.kind,
+          citation: source.legal.citation,
+          proposition: source.legal.proposition,
+          scopeNote: source.legal.scopeNote,
+          verifiedAt: source.legal.verifiedAt,
+        }
+      : null,
   }));
 
   const systemPrompt = `Eres el motor de triage de Orientador Legal Colombia. Tu tarea es organizar un relato en lenguaje ciudadano, no dar representación jurídica ni prometer resultados.
@@ -312,6 +336,9 @@ Reglas obligatorias:
 - Distingue hechos aportados de inferencias. No inventes nombres, fechas, artículos, autoridades, direcciones ni plazos.
 - Formula máximo dos preguntas de triage y solo si la respuesta cambia materialmente la ruta.
 - Usa exclusivamente IDs del catálogo oficial suministrado. No inventes citas.
+- Sustenta rightExplanation solo con las proposiciones jurídicas incluidas en el catálogo; no infieras el contenido de una fuente por su título.
+- En sourceIds incluye una norma o código pertinente. Incluye una sentencia concreta solo cuando los hechos narrados satisfagan las condiciones descritas en su proposition y scopeNote; si no, no la fuerces por categoría. No uses un dataset, un buscador de jurisprudencia ni un directorio de servicios como si fuera fundamento jurídico.
+- Expresa siempre las condiciones y límites relevantes de la regla. No afirmes que una sentencia de tutela decidió hechos distintos como si resolviera este caso.
 - Si falta respaldo o la competencia es incierta, dilo y recomienda revisión humana.
 - No calcules caducidad, prescripción ni probabilidad de ganar.
 - En violencia, riesgo vital, niñez, privación de libertad o peligro actual, prioriza seguridad y escalamiento humano.

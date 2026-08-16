@@ -43,7 +43,19 @@ export interface OfficialSource {
   title: string;
   organization: string;
   url: string;
+  legal?: {
+    kind: "constitucion" | "ley" | "codigo" | "decreto" | "sentencia";
+    citation: string;
+    proposition: string;
+    scopeNote: string;
+    verifiedAt: string;
+    effectiveAsOf?: string;
+  };
 }
+
+export type VerifiedLegalCitation = OfficialSource & {
+  legal: NonNullable<OfficialSource["legal"]>;
+};
 
 export interface LegalOrientation {
   caseTitle: string;
@@ -129,6 +141,15 @@ export const officialSources: OfficialSource[] = [
     title: "Constitución Política de Colombia",
     organization: "SUIN-Juriscol · Ministerio de Justicia",
     url: "https://www.suin-juriscol.gov.co/viewDocument.asp?id=1687988",
+    legal: {
+      kind: "constitucion",
+      citation: "Constitución Política, arts. 29 y 229",
+      proposition:
+        "Toda actuación judicial o administrativa debe respetar el debido proceso y toda persona tiene derecho a acceder a la administración de justicia.",
+      scopeNote:
+        "Estos principios no definen por sí solos el trámite, el término ni el resultado aplicable a un caso concreto.",
+      verifiedAt: "2026-08-15",
+    },
   },
   {
     id: "ley-820",
@@ -136,6 +157,15 @@ export const officialSources: OfficialSource[] = [
     title: "Régimen de arrendamiento de vivienda urbana",
     organization: "SUIN-Juriscol · Ministerio de Justicia",
     url: "https://www.suin-juriscol.gov.co/viewDocument.asp?ruta=Leyes%2F1669010",
+    legal: {
+      kind: "ley",
+      citation: "Ley 820 de 2003, arts. 21 a 24",
+      proposition:
+        "La terminación del arrendamiento de vivienda urbana depende de quién termina, la causal, el momento contractual y los requisitos de aviso, indemnización o caución que correspondan.",
+      scopeNote:
+        "Aplica a vivienda urbana; hace falta revisar el contrato, la causal invocada y la forma de comunicación antes de concluir si una terminación es válida.",
+      verifiedAt: "2026-08-15",
+    },
   },
   {
     id: "ley-1755",
@@ -143,6 +173,15 @@ export const officialSources: OfficialSource[] = [
     title: "Regulación del derecho fundamental de petición",
     organization: "SUIN-Juriscol · Ministerio de Justicia",
     url: "https://www.suin-juriscol.gov.co/viewDocument.asp?id=30043679",
+    legal: {
+      kind: "ley",
+      citation: "Ley 1755 de 2015, arts. 13 y 14",
+      proposition:
+        "Las peticiones deben recibir una respuesta de fondo dentro del término general o especial que corresponda.",
+      scopeNote:
+        "Una respuesta de fondo no tiene que ser favorable y una petición no suspende automáticamente el término de un recurso.",
+      verifiedAt: "2026-08-15",
+    },
   },
   {
     id: "codigo-trabajo",
@@ -150,6 +189,66 @@ export const officialSources: OfficialSource[] = [
     title: "Código Sustantivo del Trabajo",
     organization: "SUIN-Juriscol · Ministerio de Justicia",
     url: "https://www.suin-juriscol.gov.co/viewDocument.asp?ruta=Codigo/30019323",
+    legal: {
+      kind: "codigo",
+      citation: "Código Sustantivo del Trabajo, arts. 57.4, 134 y 488 a 489",
+      proposition:
+        "El empleador debe pagar la remuneración pactada; el sueldo se paga por periodos iguales y vencidos que no pueden superar un mes.",
+      scopeNote:
+        "El régimen, la prescripción y la jurisdicción dependen del tipo real de vínculo; no todos los contratos de prestación de servicios son relaciones laborales.",
+      verifiedAt: "2026-08-15",
+      effectiveAsOf: "Texto integrado consultado el 15 de agosto de 2026",
+    },
+  },
+  {
+    id: "codigo-trabajo-terminacion",
+    shortTitle: "Terminación del contrato laboral",
+    title: "Código Sustantivo del Trabajo — terminación e indemnización",
+    organization: "SUIN-Juriscol · Ministerio de Justicia",
+    url: "https://www.suin-juriscol.gov.co/viewDocument.asp?ruta=Codigo/30019323",
+    legal: {
+      kind: "codigo",
+      citation: "Código Sustantivo del Trabajo, arts. 61 a 65",
+      proposition:
+        "El contrato de trabajo termina por las causas legales y la terminación unilateral sin justa causa puede generar la indemnización prevista por la ley; esto no implica por sí solo un reintegro automático.",
+      scopeNote:
+        "Deben verificarse el vínculo real, el tipo de contrato, la carta y causa informadas, las fechas y la posible existencia de fuero, estabilidad reforzada, discriminación o perjuicios adicionales.",
+      verifiedAt: "2026-08-15",
+      effectiveAsOf: "Texto integrado consultado el 15 de agosto de 2026",
+    },
+  },
+  {
+    id: "codigo-comercio-arrendamiento",
+    shortTitle: "Arrendamiento de local comercial",
+    title: "Código de Comercio — renovación de inmuebles ocupados por establecimientos de comercio",
+    organization: "SUIN-Juriscol · Ministerio de Justicia",
+    url: "https://www.suin-juriscol.gov.co/viewDocument.asp?id=1833376",
+    legal: {
+      kind: "codigo",
+      citation: "Código de Comercio — Decreto 410 de 1971, arts. 518 a 524",
+      proposition:
+        "Quien haya ocupado durante al menos dos años consecutivos un inmueble con el mismo establecimiento de comercio tiene derecho a la renovación, salvo las causales legales; algunas causales exigen aviso previo no menor de seis meses.",
+      scopeNote:
+        "Aplica a locales vinculados a un establecimiento de comercio, no a vivienda urbana. Deben confirmarse el uso, la duración de la ocupación, la causal, el contrato y el aviso.",
+      verifiedAt: "2026-08-15",
+    },
+  },
+  {
+    id: "codigo-civil-alimentos",
+    shortTitle: "Código Civil — alimentos",
+    title: "Código Civil colombiano — personas titulares y reglas de los alimentos",
+    organization: "Secretaría del Senado de la República",
+    url: "https://www.secretariasenado.gov.co/senado/basedoc/codigo_civil_pr012.html",
+    legal: {
+      kind: "codigo",
+      citation: "Código Civil, arts. 411 a 427",
+      proposition:
+        "La obligación alimentaria solo existe frente a las personas y bajo las condiciones previstas por la ley; su alcance depende de la necesidad de quien pide y de la capacidad de quien debe aportar.",
+      scopeNote:
+        "La relación familiar, la edad, los acuerdos o decisiones previas y las reglas especiales pueden cambiar la ruta. Este código no fija automáticamente cuantía, custodia ni visitas.",
+      verifiedAt: "2026-08-15",
+      effectiveAsOf: "Texto actualizado consultado el 15 de agosto de 2026",
+    },
   },
   {
     id: "ley-2126",
@@ -157,6 +256,15 @@ export const officialSources: OfficialSource[] = [
     title: "Creación y funcionamiento de las comisarías de familia",
     organization: "SUIN-Juriscol · Ministerio de Justicia",
     url: "https://www.suin-juriscol.gov.co/viewDocument.asp?ruta=Leyes%2F30042087",
+    legal: {
+      kind: "ley",
+      citation: "Ley 2126 de 2021",
+      proposition:
+        "Las comisarías de familia tienen funciones de prevención y protección frente a la violencia en el contexto familiar y pueden adoptar las medidas previstas por la ley dentro de su competencia.",
+      scopeNote:
+        "La competencia cambia según los hechos, la presencia de niñas, niños o adolescentes y la posible existencia de violencia sexual u otros delitos.",
+      verifiedAt: "2026-08-15",
+    },
   },
   {
     id: "legalapp",
@@ -178,6 +286,15 @@ export const officialSources: OfficialSource[] = [
     title: "Código de Procedimiento Administrativo y de lo Contencioso Administrativo",
     organization: "SUIN-Juriscol · Ministerio de Justicia",
     url: "https://www.suin-juriscol.gov.co/viewDocument.asp?ruta=Leyes%2F1680117",
+    legal: {
+      kind: "codigo",
+      citation: "CPACA — Ley 1437 de 2011, arts. 3, 34 y ss. y 74 a 79",
+      proposition:
+        "Las actuaciones administrativas deben respetar el debido proceso, la defensa y la contradicción; los recursos dependen del acto y de las reglas aplicables.",
+      scopeNote:
+        "Tránsito, policía, impuestos y otros regímenes pueden tener reglas especiales. Deben verificarse el acto completo, su notificación y el término escrito.",
+      verifiedAt: "2026-08-15",
+    },
   },
   {
     id: "ley-2220",
@@ -192,6 +309,15 @@ export const officialSources: OfficialSource[] = [
     title: "Código General del Proceso",
     organization: "SUIN-Juriscol · Ministerio de Justicia",
     url: "https://www.suin-juriscol.gov.co/viewDocument.asp?ruta=Leyes%2F1683572",
+    legal: {
+      kind: "codigo",
+      citation: "Código General del Proceso — Ley 1564 de 2012, arts. 14 y 384",
+      proposition:
+        "El debido proceso es obligatorio y la restitución judicial de un inmueble arrendado tiene un trámite específico.",
+      scopeNote:
+        "La defensa y las cargas procesales dependen del documento recibido, la causal, el contrato y los pagos; una comunicación privada no equivale a una orden judicial.",
+      verifiedAt: "2026-08-15",
+    },
   },
   {
     id: "decreto-2591",
@@ -206,6 +332,208 @@ export const officialSources: OfficialSource[] = [
     title: "Ley Estatutaria de Salud",
     organization: "SUIN-Juriscol · Ministerio de Justicia",
     url: "https://www.suin-juriscol.gov.co/viewDocument.asp?ruta=Leyes%2F30019746",
+    legal: {
+      kind: "ley",
+      citation: "Ley Estatutaria 1751 de 2015, arts. 2, 6, 8 y 14",
+      proposition:
+        "La salud es un derecho fundamental autónomo y comprende acceso oportuno, eficaz, de calidad e integral; la atención urgente no puede condicionarse a autorización previa.",
+      scopeNote:
+        "La procedencia de una tutela o de un servicio concreto exige revisar la orden médica, el riesgo, la regulación aplicable y la eficacia de otros canales.",
+      verifiedAt: "2026-08-15",
+    },
+  },
+  {
+    id: "ley-2452",
+    shortTitle: "Código Procesal del Trabajo 2025",
+    title: "Código Procesal del Trabajo y de la Seguridad Social — Ley 2452 de 2025",
+    organization: "SUIN-Juriscol · Ministerio de Justicia",
+    url: "https://www.suin-juriscol.gov.co/viewDocument.asp?id=30054744",
+    legal: {
+      kind: "codigo",
+      citation: "Ley 2452 de 2025, arts. 286 y ss.",
+      proposition:
+        "Desde el 2 de abril de 2026 existe un proceso monitorio para ciertas obligaciones laborales determinadas y exigibles que no superen veinte salarios mínimos.",
+      scopeNote:
+        "No toda deuda salarial cumple esos requisitos y los procesos iniciados antes de la vigencia de este código continúan bajo el régimen anterior.",
+      verifiedAt: "2026-08-15",
+      effectiveAsOf: "Vigente desde el 2 de abril de 2026",
+    },
+  },
+  {
+    id: "codigo-infancia",
+    shortTitle: "Código de Infancia y Adolescencia",
+    title: "Código de la Infancia y la Adolescencia — Ley 1098 de 2006",
+    organization: "SUIN-Juriscol · Ministerio de Justicia",
+    url: "https://www.suin-juriscol.gov.co/viewDocument.asp?id=1673639",
+    legal: {
+      kind: "codigo",
+      citation: "Ley 1098 de 2006, arts. 8, 9, 23 y 24",
+      proposition:
+        "Las decisiones sobre niñas, niños y adolescentes deben atender su interés superior y la prevalencia de sus derechos; el código regula cuidado personal y el alcance de los alimentos.",
+      scopeNote:
+        "El interés superior exige una valoración individual y no fija automáticamente custodia, visitas ni cuantía alimentaria.",
+      verifiedAt: "2026-08-15",
+    },
+  },
+  {
+    id: "codigo-procedimiento-penal",
+    shortTitle: "Código de Procedimiento Penal",
+    title: "Código de Procedimiento Penal — Ley 906 de 2004",
+    organization: "SUIN-Juriscol · Ministerio de Justicia",
+    url: "https://www.suin-juriscol.gov.co/viewDocument.asp?ruta=Leyes%2F1670249",
+    legal: {
+      kind: "codigo",
+      citation: "Ley 906 de 2004, arts. 11 y 69",
+      proposition:
+        "Las víctimas tienen derechos a información, protección y acceso a la justicia; una denuncia debe relatar de forma detallada los hechos conocidos.",
+      scopeNote:
+        "Denuncia y querella no son equivalentes. La herramienta no determina si hubo delito ni reemplaza la valoración de la Fiscalía.",
+      verifiedAt: "2026-08-15",
+    },
+  },
+  {
+    id: "sentencia-c-426-2023",
+    shortTitle: "Sentencia C-426 de 2023",
+    title: "Seguridad jurídica de la tenencia en arrendamiento de vivienda urbana",
+    organization: "Corte Constitucional de Colombia",
+    url: "https://www.corteconstitucional.gov.co/relatoria/2023/C-426-23.htm",
+    legal: {
+      kind: "sentencia",
+      citation: "Corte Constitucional, Sentencia C-426 de 2023",
+      proposition:
+        "La seguridad jurídica de la tenencia integra la vivienda digna y los requisitos legales buscan prevenir terminaciones injustificadas en los supuestos examinados.",
+      scopeNote:
+        "La decisión examinó específicamente la caución del artículo 22.8 de la Ley 820; no vuelve inválida toda terminación ni autoriza permanencia indefinida.",
+      verifiedAt: "2026-08-15",
+    },
+  },
+  {
+    id: "sentencia-su-995-1999",
+    shortTitle: "Sentencia SU-995 de 1999",
+    title: "Pago oportuno del salario y mínimo vital",
+    organization: "Corte Constitucional de Colombia",
+    url: "https://www.corteconstitucional.gov.co/relatoria/1999/SU995-99.htm",
+    legal: {
+      kind: "sentencia",
+      citation: "Corte Constitucional, Sentencia SU-995 de 1999",
+      proposition:
+        "El pago completo y oportuno del salario tiene dimensión fundamental por su relación con la dignidad y el mínimo vital.",
+      scopeNote:
+        "La tutela no es un cobro laboral ordinario: requiere valorar la afectación concreta del mínimo vital y la eficacia de los otros medios judiciales.",
+      verifiedAt: "2026-08-15",
+    },
+  },
+  {
+    id: "sentencia-c-1507-2000",
+    shortTitle: "Sentencia C-1507 de 2000",
+    title: "Terminación unilateral sin justa causa e indemnización laboral",
+    organization: "Corte Constitucional de Colombia",
+    url: "https://www.corteconstitucional.gov.co/relatoria/2000/C-1507-00.htm",
+    legal: {
+      kind: "sentencia",
+      citation: "Corte Constitucional, Sentencia C-1507 de 2000",
+      proposition:
+        "La terminación unilateral sin justa causa genera la indemnización legal y no un reintegro automático, sin excluir el análisis separado de protecciones especiales o perjuicios probados.",
+      scopeNote:
+        "La sentencia resolvió un control abstracto del artículo 64 y no determina si este relato configura un despido sin justa causa, un fuero, discriminación o estabilidad laboral reforzada.",
+      verifiedAt: "2026-08-15",
+    },
+  },
+  {
+    id: "sentencia-su-508-2020",
+    shortTitle: "Sentencia SU-508 de 2020",
+    title: "Acceso integral y oportuno a servicios de salud",
+    organization: "Corte Constitucional de Colombia",
+    url: "https://www.corteconstitucional.gov.co/relatoria/2020/SU508-20.htm",
+    legal: {
+      kind: "sentencia",
+      citation: "Corte Constitucional, Sentencia SU-508 de 2020",
+      proposition:
+        "La garantía de salud exige integralidad y diagnóstico oportuno; lo no excluido expresamente se entiende incluido bajo las reglas examinadas por la Corte.",
+      scopeNote:
+        "La subsidiariedad de la tutela y la eficacia de la Superintendencia de Salud deben evaluarse en las circunstancias concretas.",
+      verifiedAt: "2026-08-15",
+    },
+  },
+  {
+    id: "sentencia-t-510-2003",
+    shortTitle: "Sentencia T-510 de 2003",
+    title: "Interés superior de niñas, niños y adolescentes",
+    organization: "Corte Constitucional de Colombia",
+    url: "https://www.corteconstitucional.gov.co/relatoria/2003/T-510-03.htm",
+    legal: {
+      kind: "sentencia",
+      citation: "Corte Constitucional, Sentencia T-510 de 2003",
+      proposition:
+        "El interés superior de una persona menor de edad debe establecerse atendiendo las circunstancias fácticas y jurídicas particulares, no de manera abstracta.",
+      scopeNote:
+        "La sentencia no decide automáticamente custodia, alimentos o visitas en otros casos; sirve como criterio de valoración individual.",
+      verifiedAt: "2026-08-15",
+    },
+  },
+  {
+    id: "sentencia-t-462-2018",
+    shortTitle: "Sentencia T-462 de 2018",
+    title: "Protección inmediata frente a violencia intrafamiliar",
+    organization: "Corte Constitucional de Colombia",
+    url: "https://www.corteconstitucional.gov.co/relatoria/2018/T-462-18.htm",
+    legal: {
+      kind: "sentencia",
+      citation: "Corte Constitucional, Sentencia T-462 de 2018",
+      proposition:
+        "Las víctimas de violencia intrafamiliar deben poder acceder a medidas inmediatas de protección frente a agresiones físicas, psicológicas, sexuales o amenazas.",
+      scopeNote:
+        "Ante peligro actual debe priorizarse la seguridad y el contacto humano de emergencia, no el análisis documental de la herramienta.",
+      verifiedAt: "2026-08-15",
+    },
+  },
+  {
+    id: "sentencia-c-1177-2005",
+    shortTitle: "Sentencia C-1177 de 2005",
+    title: "Contenido y recepción de la denuncia penal",
+    organization: "Corte Constitucional de Colombia",
+    url: "https://www.corteconstitucional.gov.co/relatoria/2005/C-1177-05.htm",
+    legal: {
+      kind: "sentencia",
+      citation: "Corte Constitucional, Sentencia C-1177 de 2005",
+      proposition:
+        "La denuncia debe narrar claramente los hechos conocidos sin el rigor técnico de una demanda; una inadmisión debe ser motivada y comunicada.",
+      scopeNote:
+        "La persona debe separar hechos observados, inferencias y soportes; la aplicación no puede asignar autores, intención o tipo penal.",
+      verifiedAt: "2026-08-15",
+    },
+  },
+  {
+    id: "sentencia-c-980-2010",
+    shortTitle: "Sentencia C-980 de 2010",
+    title: "Garantías del debido proceso administrativo",
+    organization: "Corte Constitucional de Colombia",
+    url: "https://www.corteconstitucional.gov.co/RELATORIA/2010/C-980-10.htm",
+    legal: {
+      kind: "sentencia",
+      citation: "Corte Constitucional, Sentencia C-980 de 2010",
+      proposition:
+        "El debido proceso administrativo comprende ser oído, notificación legal, autoridad competente, defensa, contradicción, pruebas e impugnación.",
+      scopeNote:
+        "El recurso y su término dependen del acto y del régimen especial; deben verificarse en el documento completo antes de actuar.",
+      verifiedAt: "2026-08-15",
+    },
+  },
+  {
+    id: "sentencia-c-426-2002",
+    shortTitle: "Sentencia C-426 de 2002",
+    title: "Acceso efectivo a la administración de justicia",
+    organization: "Corte Constitucional de Colombia",
+    url: "https://www.corteconstitucional.gov.co/relatoria/2002/C-426-02.htm",
+    legal: {
+      kind: "sentencia",
+      citation: "Corte Constitucional, Sentencia C-426 de 2002",
+      proposition:
+        "El acceso a la justicia permite acudir en condiciones de igualdad ante jueces y tribunales, con sujeción a los procedimientos y garantías aplicables.",
+      scopeNote:
+        "La sentencia no identifica qué acción, autoridad o término corresponde sin conocer los hechos y el régimen específico.",
+      verifiedAt: "2026-08-15",
+    },
   },
   {
     id: "sentencias-corte",
@@ -858,4 +1186,143 @@ export function getOfficialSources(sourceIds: string[]) {
   return sourceIds
     .map((id) => officialSources.find((source) => source.id === id))
     .filter((source): source is OfficialSource => Boolean(source));
+}
+
+const preliminaryCitationIdsByCategory: Record<LegalCategory, readonly string[]> = {
+  arrendamiento: ["ley-820", "codigo-general-proceso"],
+  laboral: ["codigo-trabajo"],
+  salud: ["ley-1751", "sentencia-su-508-2020"],
+  familia: ["constitucion"],
+  penal: ["codigo-procedimiento-penal", "sentencia-c-1177-2005"],
+  administrativo: ["cpaca", "sentencia-c-980-2010"],
+  otro: ["constitucion", "sentencia-c-426-2002"],
+};
+
+export function getPreliminaryLegalCitations(
+  orientation: LegalOrientation,
+  rawStory = orientation.plainSummary,
+): VerifiedLegalCitation[] {
+  const facts = [
+    rawStory,
+    orientation.caseTitle,
+    orientation.plainSummary,
+    ...orientation.extractedFacts,
+  ].join(" ");
+  let citationIds = preliminaryCitationIdsByCategory[orientation.category];
+
+  if (orientation.documentKind === "medida-proteccion") {
+    citationIds = ["ley-2126", "sentencia-t-462-2018"];
+  } else if (orientation.sourceIds.includes("icbf-linea-141")) {
+    citationIds = [
+      "codigo-infancia",
+      "codigo-procedimiento-penal",
+      "sentencia-c-1177-2005",
+    ];
+  } else if (orientation.category === "arrendamiento") {
+    const isCommercialPremises = hasAny(facts, [
+      "local comercial",
+      "establecimiento de comercio",
+      "mi local",
+      "un local",
+      "el local",
+      "inmueble comercial",
+      "negocio funciona",
+    ]);
+    const hasSpecialHousingGround = hasAny(facts, [
+      "caucion",
+      "causal especial",
+      "ocupacion propia",
+      "necesita ocupar",
+      "va a ocupar",
+      "demoler",
+      "demolicion",
+      "reparacion indispensable",
+      "compraventa",
+      "venta del inmueble",
+      "plena voluntad",
+      "cuatro anos",
+    ]);
+
+    citationIds = isCommercialPremises
+      ? ["codigo-comercio-arrendamiento"]
+      : [
+          "ley-820",
+          "codigo-general-proceso",
+          ...(hasSpecialHousingGround ? ["sentencia-c-426-2023"] : []),
+        ];
+  } else if (orientation.category === "laboral") {
+    const hasPaymentClaim = hasAny(facts, [
+      "salario",
+      "sueldo",
+      "no me pagan",
+      "no me han pagado",
+      "liquidacion",
+      "prestaciones",
+      "prima",
+      "cesantias",
+    ]);
+    const hasTerminationClaim = hasAny(facts, [
+      "despid",
+      "terminacion del contrato",
+      "terminaron mi contrato",
+      "termino mi contrato",
+      "sin justa causa",
+    ]);
+    const hasUnexplainedOrNoCauseTermination = hasAny(facts, [
+      "sin justa causa",
+      "sin causa",
+      "no explicaron",
+      "no me explicaron",
+      "no me dijeron la razon",
+      "sin explicacion",
+    ]);
+    const hasMinimumVitalSignal = hasAny(facts, [
+      "minimo vital",
+      "no tengo para",
+      "no puedo pagar el arriendo",
+      "no puedo comprar comida",
+      "necesidades basicas",
+      "subsistencia",
+      "dependemos de ese salario",
+      "sostener a mi familia",
+    ]);
+
+    citationIds = [
+      ...(hasPaymentClaim ? ["codigo-trabajo", "ley-2452"] : []),
+      ...(hasPaymentClaim && hasMinimumVitalSignal ? ["sentencia-su-995-1999"] : []),
+      ...(hasTerminationClaim ? ["codigo-trabajo-terminacion"] : []),
+      ...(hasTerminationClaim && hasUnexplainedOrNoCauseTermination
+        ? ["sentencia-c-1507-2000"]
+        : []),
+    ];
+    if (citationIds.length === 0) citationIds = ["codigo-trabajo"];
+  } else if (orientation.category === "familia") {
+    const hasFoodClaim = hasAny(facts, ["alimentos", "cuota alimentaria", "pension alimentaria"]);
+    const hasExplicitAdultBeneficiary = hasAny(facts, [
+      "hijo adulto",
+      "hija adulta",
+      "persona adulta",
+      "mayor de edad",
+    ]);
+    const hasMinor =
+      !hasExplicitAdultBeneficiary &&
+      hasAny(facts, [
+        "mi hijo",
+        "mi hija",
+        "nino",
+        "nina",
+        "adolescente",
+        "menor de edad",
+      ]);
+
+    citationIds = [
+      ...(hasFoodClaim ? ["codigo-civil-alimentos"] : []),
+      ...(hasMinor ? ["codigo-infancia", "sentencia-t-510-2003"] : []),
+    ];
+    if (citationIds.length === 0) citationIds = ["constitucion"];
+  }
+
+  return getOfficialSources([...new Set(citationIds)]).filter(
+    (source): source is VerifiedLegalCitation => Boolean(source.legal),
+  );
 }

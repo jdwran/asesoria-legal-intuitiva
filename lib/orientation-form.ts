@@ -6,7 +6,7 @@ export const ORIENTATION_FORM_LIMITS = {
 } as const;
 
 export const PROCESSING_CONSENT_COPY =
-  "Autorizo procesar este relato para organizar el caso. Esta herramienta no es un abogado: el envío no crea una relación abogado–cliente ni secreto profesional.";
+  "Autorizo procesar este relato y la información adicional que decida agregar para organizar el caso. Esta herramienta no es un abogado: el envío no crea una relación abogado–cliente ni secreto profesional.";
 
 export const EXTERNAL_PROCESSING_COPY =
   "Al enviar, el relato puede enviarse a un proveedor externo de IA para procesarlo y organizar el caso.";

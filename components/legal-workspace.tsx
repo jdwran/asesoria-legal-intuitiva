@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   ArrowRight,
@@ -10,6 +10,8 @@ import {
   ChevronRight,
   ClipboardCheck,
   Clock3,
+  Cloud,
+  CloudOff,
   Compass,
   Download,
   ExternalLink,
@@ -19,6 +21,7 @@ import {
   Info,
   Landmark,
   LoaderCircle,
+  LogOut,
   MapPin,
   Menu,
   MoreHorizontal,
@@ -26,6 +29,7 @@ import {
   Pencil,
   Plus,
   Scale,
+  Save,
   ShieldCheck,
   Sparkles,
   Upload,
@@ -68,6 +72,7 @@ import {
   getColombianProcedureSteps,
   getSuggestedCaseBlocks,
 } from "@/lib/case-guidance";
+import type { CaseSessionSnapshot } from "@/lib/case-session";
 import {
   CaseElement,
   CaseElementType,
@@ -87,6 +92,9 @@ import {
 type NavKey = "resumen" | "expediente" | "ruta" | "resultados";
 type AnalysisProvider = "demo" | "open" | "openai";
 type AnalysisMode = "ready" | "demo" | "ai";
+type AccountState = "checking" | "anonymous" | "active" | "unavailable";
+type SaveState = "ready" | "saving" | "saved" | "error" | "conflict";
+type SavedAccount = { displayName: string };
 type OrientationApiResponse = LegalOrientation & {
   mode?: "demo" | "ai";
   degraded?: boolean;
@@ -95,6 +103,100 @@ type OrientationApiResponse = LegalOrientation & {
 };
 
 const ORIENTATION_REQUEST_TIMEOUT_MS = 90_000;
+const SESSION_SAVE_DEBOUNCE_MS = 800;
+
+function AccountSessionStatus({
+  account,
+  saveState,
+  onRetry,
+  onSignOut,
+}: {
+  account: SavedAccount;
+  saveState: SaveState;
+  onRetry: () => void;
+  onSignOut: () => void;
+}) {
+  const statusLabel =
+    saveState === "saving"
+      ? "Guardando…"
+      : saveState === "saved"
+        ? "Guardado"
+        : saveState === "error"
+          ? "No se pudo guardar"
+          : saveState === "conflict"
+            ? "Cambios en otra pestaña"
+            : "Listo para guardar";
+  const StatusIcon = saveState === "error" || saveState === "conflict" ? CloudOff : saveState === "ready" ? Save : Cloud;
+
+  return (
+    <div className="flex min-w-0 items-center gap-2 rounded-full border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-600 shadow-sm">
+      <StatusIcon
+        aria-hidden="true"
+        className={`size-3.5 shrink-0 ${saveState === "error" || saveState === "conflict" ? "text-rose-600" : "text-emerald-600"}`}
+      />
+      <span className="hidden max-w-32 truncate font-semibold text-slate-800 sm:inline" title={account.displayName}>
+        {account.displayName}
+      </span>
+      <span className="sr-only sm:not-sr-only" aria-live="polite">
+        {statusLabel}
+      </span>
+      {saveState === "error" && (
+        <button type="button" onClick={onRetry} className="font-semibold text-[#173f6b] hover:underline">
+          Reintentar
+        </button>
+      )}
+      {saveState === "conflict" && (
+        <button type="button" onClick={() => window.location.reload()} className="font-semibold text-[#173f6b] hover:underline">
+          Recargar
+        </button>
+      )}
+      <a
+        href="/signout-with-chatgpt?return_to=%2F"
+        onClick={onSignOut}
+        className="grid size-6 shrink-0 place-items-center rounded-full text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+        aria-label="Cerrar sesión y retirar el expediente de este dispositivo"
+        title="Cerrar sesión"
+      >
+        <LogOut className="size-3.5" />
+      </a>
+    </div>
+  );
+}
+
+function AccountSessionLoader() {
+  return (
+    <div className="grid min-h-[100dvh] place-items-center bg-[#f4f3ee] px-6 text-[#102238]">
+      <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm" role="status">
+        <LoaderCircle className="size-5 animate-spin text-emerald-600" />
+        <div>
+          <p className="text-sm font-semibold">Restaurando tu sesión</p>
+          <p className="mt-0.5 text-xs text-slate-500">Estamos recuperando tu expediente guardado.</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AccountSessionUnavailable() {
+  return (
+    <div className="grid min-h-[100dvh] place-items-center bg-[#f4f3ee] px-6 text-[#102238]">
+      <div className="max-w-md rounded-2xl border border-amber-200 bg-white p-6 text-center shadow-sm" role="alert">
+        <CloudOff className="mx-auto size-7 text-amber-700" aria-hidden="true" />
+        <h1 className="mt-3 font-serif text-2xl font-semibold">No pudimos restaurar tu sesión</h1>
+        <p className="mt-2 text-sm leading-6 text-slate-600">
+          Para no reemplazar tu expediente guardado con uno vacío, espera un momento e inténtalo de nuevo.
+        </p>
+        <button
+          type="button"
+          onClick={() => window.location.reload()}
+          className="mt-5 min-h-11 rounded-lg bg-[#173f6b] px-4 py-2 text-sm font-bold text-white hover:bg-[#102f51]"
+        >
+          Reintentar
+        </button>
+      </div>
+    </div>
+  );
+}
 
 async function requestOrientation(input: {
   story: string;
@@ -284,7 +386,7 @@ function CaseNavigation({
   );
 }
 
-export function LegalWorkspace() {
+export function LegalWorkspace({ identityAvailable = false }: { identityAvailable?: boolean }) {
   const resultHeadingRef = useRef<HTMLHeadingElement>(null);
   const triageSectionRef = useRef<HTMLElement>(null);
   const [activeSection, setActiveSection] = useState<NavKey>("resumen");
@@ -319,6 +421,61 @@ export function LegalWorkspace() {
     detail: string;
     date: string;
   }>({ type: "pruebas", title: "", detail: "", date: "" });
+  const [accountState, setAccountState] = useState<AccountState>(identityAvailable ? "checking" : "anonymous");
+  const [account, setAccount] = useState<SavedAccount | null>(null);
+  const [saveState, setSaveState] = useState<SaveState>("ready");
+  const saveStateRef = useRef<SaveState>("ready");
+  const accountEnabledRef = useRef(false);
+  const sessionRevisionRef = useRef(0);
+  const saveInFlightRef = useRef(false);
+  const pendingSnapshotRef = useRef<CaseSessionSnapshot | null>(null);
+  const lastPersistedSnapshotRef = useRef<string | null>(null);
+
+  const updateSaveState = useCallback((nextState: SaveState) => {
+    saveStateRef.current = nextState;
+    setSaveState(nextState);
+  }, []);
+
+  const resetPrivateWorkspace = useCallback(() => {
+    accountEnabledRef.current = false;
+    sessionRevisionRef.current = 0;
+    saveInFlightRef.current = false;
+    pendingSnapshotRef.current = null;
+    lastPersistedSnapshotRef.current = null;
+    setAccount(null);
+    setAccountState("anonymous");
+    updateSaveState("ready");
+    setActiveSection("resumen");
+    setElements(initialElements);
+    setOrientation(initialOrientation);
+    setCompletedSteps([0]);
+    setNewCaseOpen(false);
+    setCaseMenuOpen(false);
+    setAddOpen(false);
+    setSelectedSuggestion(null);
+    setDocumentOpen(false);
+    setStory("");
+    setSavedStory("");
+    setCity("");
+    setProcessingConsent(false);
+    setIsAnalyzing(false);
+    setIsRefining(false);
+    setAnalysisMode("ready");
+    setAnalysisProvider(null);
+    setHasAnalyzedCase(false);
+    setAnalysisFallbackUsed(false);
+    setAnalysisDegraded(false);
+    setNotice("IA lista para organizar tu caso");
+    setFormError("");
+    setTriageAnswers({});
+    setTriageSaved(false);
+    setTriageError("");
+    setNewElement({ type: "pruebas", title: "", detail: "", date: "" });
+  }, [updateSaveState]);
+
+  const signOut = useCallback(() => {
+    resetPrivateWorkspace();
+  }, [resetPrivateWorkspace]);
 
   const sources = useMemo(() => getOfficialSources(orientation.sourceIds), [orientation.sourceIds]);
   const savedSourceIds = useMemo(
@@ -357,6 +514,241 @@ export function LegalWorkspace() {
   const nextProcedureIndex = procedureSteps.findIndex((_, index) => !completedSteps.includes(index));
   const nextProcedure = procedureSteps[nextProcedureIndex === -1 ? procedureSteps.length - 1 : nextProcedureIndex];
   const needsTriage = !triageSaved && orientation.triageQuestions.length > 0;
+  const caseSessionSnapshot = useMemo<CaseSessionSnapshot>(
+    () => ({
+      schemaVersion: 1,
+      draft: { story, city },
+      case: hasAnalyzedCase
+        ? {
+            savedStory,
+            orientation,
+            elements,
+            completedStepIds: completedSteps.flatMap((index) => {
+              const stepId = procedureSteps[index]?.id;
+              return stepId ? [stepId] : [];
+            }),
+            triageAnswers: Object.fromEntries(
+              Object.entries(triageAnswers).map(([index, answer]) => [String(index), answer]),
+            ),
+            triageSaved,
+            analysis: {
+              mode: analysisMode,
+              provider: analysisProvider,
+              fallbackUsed: analysisFallbackUsed,
+              degraded: analysisDegraded,
+            },
+          }
+        : null,
+    }),
+    [
+      analysisDegraded,
+      analysisFallbackUsed,
+      analysisMode,
+      analysisProvider,
+      city,
+      completedSteps,
+      elements,
+      hasAnalyzedCase,
+      orientation,
+      procedureSteps,
+      savedStory,
+      story,
+      triageAnswers,
+      triageSaved,
+    ],
+  );
+
+  const persistPendingSession = useCallback(
+    async function persistPendingSession() {
+      if (!accountEnabledRef.current || saveInFlightRef.current || !pendingSnapshotRef.current) return;
+
+      saveInFlightRef.current = true;
+      let stopped = false;
+
+      while (accountEnabledRef.current && pendingSnapshotRef.current && !stopped) {
+        const snapshot: CaseSessionSnapshot = pendingSnapshotRef.current;
+        const serializedSnapshot = JSON.stringify(snapshot);
+        pendingSnapshotRef.current = null;
+        updateSaveState("saving");
+
+        try {
+          const response = await fetch("/api/session", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            credentials: "same-origin",
+            body: JSON.stringify({
+              snapshot,
+              expectedRevision: sessionRevisionRef.current,
+            }),
+          });
+
+          if (response.status === 409) {
+            if (!pendingSnapshotRef.current) pendingSnapshotRef.current = snapshot;
+            updateSaveState("conflict");
+            stopped = true;
+            continue;
+          }
+
+          if (response.status === 401 || response.status === 403) {
+            resetPrivateWorkspace();
+            stopped = true;
+            continue;
+          }
+
+          if (!response.ok) throw new Error("save_failed");
+
+          const payload = (await response.json()) as { revision?: unknown };
+          if (typeof payload.revision !== "number" || !Number.isInteger(payload.revision)) {
+            throw new Error("invalid_revision");
+          }
+
+          sessionRevisionRef.current = payload.revision;
+          lastPersistedSnapshotRef.current = serializedSnapshot;
+          updateSaveState("saved");
+        } catch {
+          if (!pendingSnapshotRef.current) pendingSnapshotRef.current = snapshot;
+          updateSaveState("error");
+          stopped = true;
+        }
+      }
+
+      saveInFlightRef.current = false;
+      if (!stopped && accountEnabledRef.current && pendingSnapshotRef.current) {
+        window.queueMicrotask(() => void persistPendingSession());
+      }
+    },
+    [resetPrivateWorkspace, updateSaveState],
+  );
+
+  useEffect(() => {
+    if (!identityAvailable) return;
+
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 12_000);
+    let cancelled = false;
+
+    async function restoreSavedSession() {
+      try {
+        const response = await fetch("/api/session", {
+          cache: "no-store",
+          credentials: "same-origin",
+          signal: controller.signal,
+        });
+
+        if (response.status === 401 || response.status === 403 || response.status === 404) {
+          if (!cancelled) setAccountState("anonymous");
+          return;
+        }
+        if (!response.ok) throw new Error("session_unavailable");
+
+        const payload = (await response.json()) as {
+          account?: { displayName?: unknown };
+          session?: { snapshot?: CaseSessionSnapshot; revision?: unknown } | null;
+        };
+        if (!payload.account || typeof payload.account.displayName !== "string") {
+          throw new Error("invalid_account");
+        }
+        if (cancelled) return;
+
+        const savedSession = payload.session ?? null;
+        if (savedSession) {
+          if (!savedSession.snapshot || typeof savedSession.revision !== "number") {
+            throw new Error("invalid_session");
+          }
+
+          const snapshot = savedSession.snapshot;
+          setStory(snapshot.draft.story);
+          setCity(snapshot.draft.city);
+          setProcessingConsent(false);
+          sessionRevisionRef.current = savedSession.revision;
+          lastPersistedSnapshotRef.current = JSON.stringify(snapshot);
+
+          if (snapshot.case) {
+            const restoredCase = snapshot.case;
+            const restoredProcedureSteps = getColombianProcedureSteps(restoredCase.orientation, snapshot.draft.city);
+            const completedIds = new Set(restoredCase.completedStepIds);
+            const restoredTriageAnswers = Object.entries(restoredCase.triageAnswers).reduce<Record<number, string>>(
+              (answers, [index, answer]) => {
+                const numericIndex = Number(index);
+                if (Number.isInteger(numericIndex) && numericIndex >= 0) answers[numericIndex] = answer;
+                return answers;
+              },
+              {},
+            );
+
+            setSavedStory(restoredCase.savedStory);
+            setOrientation(restoredCase.orientation);
+            setElements(restoredCase.elements);
+            setCompletedSteps(
+              restoredProcedureSteps.flatMap((step, index) => (completedIds.has(step.id) ? [index] : [])),
+            );
+            setTriageAnswers(restoredTriageAnswers);
+            setTriageSaved(restoredCase.triageSaved);
+            setAnalysisMode(restoredCase.analysis.mode);
+            setAnalysisProvider(restoredCase.analysis.provider);
+            setAnalysisFallbackUsed(restoredCase.analysis.fallbackUsed);
+            setAnalysisDegraded(restoredCase.analysis.degraded);
+            setHasAnalyzedCase(true);
+            setNotice("Sesión restaurada · tus cambios se guardarán automáticamente");
+          } else {
+            setHasAnalyzedCase(false);
+            setNotice("Borrador restaurado · tus cambios se guardarán automáticamente");
+          }
+        } else {
+          sessionRevisionRef.current = 0;
+          setNotice("Guardado seguro activado");
+        }
+
+        accountEnabledRef.current = true;
+        setAccount({ displayName: payload.account.displayName });
+        updateSaveState(savedSession ? "saved" : "ready");
+        setAccountState("active");
+      } catch {
+        if (!cancelled) setAccountState("unavailable");
+      } finally {
+        window.clearTimeout(timeout);
+      }
+    }
+
+    void restoreSavedSession();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [identityAvailable, updateSaveState]);
+
+  useEffect(() => {
+    if (accountState !== "active" || !accountEnabledRef.current) return;
+    if (
+      sessionRevisionRef.current === 0 &&
+      lastPersistedSnapshotRef.current === null &&
+      !caseSessionSnapshot.case &&
+      !caseSessionSnapshot.draft.story.trim() &&
+      !caseSessionSnapshot.draft.city.trim()
+    ) {
+      return;
+    }
+
+    const serializedSnapshot = JSON.stringify(caseSessionSnapshot);
+    if (serializedSnapshot === lastPersistedSnapshotRef.current) {
+      if (
+        saveInFlightRef.current ||
+        saveStateRef.current === "error" ||
+        saveStateRef.current === "conflict"
+      ) {
+        pendingSnapshotRef.current = caseSessionSnapshot;
+      } else {
+        pendingSnapshotRef.current = null;
+      }
+      return;
+    }
+
+    pendingSnapshotRef.current = caseSessionSnapshot;
+    if (saveStateRef.current === "error" || saveStateRef.current === "conflict") return;
+    const timeout = window.setTimeout(() => void persistPendingSession(), SESSION_SAVE_DEBOUNCE_MS);
+    return () => window.clearTimeout(timeout);
+  }, [accountState, caseSessionSnapshot, persistPendingSession]);
 
   useEffect(() => {
     if (!hasAnalyzedCase) return;
@@ -736,10 +1128,23 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
 
   const sectionTitle =
     navGroups.flatMap((group) => group.items).find((item) => item.id === activeSection)?.label ?? "Vista general";
+  const accountIndicator =
+    accountState === "active" && account ? (
+      <AccountSessionStatus
+        account={account}
+        saveState={saveState}
+        onRetry={() => void persistPendingSession()}
+        onSignOut={signOut}
+      />
+    ) : null;
+
+  if (accountState === "checking") return <AccountSessionLoader />;
+  if (accountState === "unavailable") return <AccountSessionUnavailable />;
 
   if (!hasAnalyzedCase) {
     return (
       <LegalEmptyState
+        accountIndicator={accountIndicator}
         story={story}
         city={city}
         processingConsent={processingConsent}
@@ -818,6 +1223,7 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
         </div>
 
         <div className="flex items-center gap-2">
+          {accountIndicator}
           <span className="hidden items-center gap-1.5 text-xs text-slate-500 xl:flex" role="status" aria-live="polite">
             <Check className="size-3.5 text-emerald-600" />
             {notice}

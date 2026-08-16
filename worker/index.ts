@@ -44,10 +44,23 @@ const securityHeaders: Record<string, string> = {
   "X-Robots-Tag": "noindex, nofollow, noarchive",
 };
 
-function withSecurityHeaders(response: Response) {
+function withSecurityHeaders(response: Response, request?: Request) {
   const headers = new Headers(response.headers);
   for (const [key, value] of Object.entries(securityHeaders)) {
     headers.set(key, value);
+  }
+  if (request) {
+    const pathname = new URL(request.url).pathname;
+    if (
+      pathname === "/acceso" ||
+      pathname.startsWith("/acceso/") ||
+      pathname === "/api/account" ||
+      pathname === "/api/session"
+    ) {
+      headers.set("Cache-Control", "no-store, max-age=0");
+      headers.set("Pragma", "no-cache");
+      headers.set("Referrer-Policy", "no-referrer");
+    }
   }
   headers.delete("X-Powered-By");
 
@@ -77,10 +90,10 @@ const worker = {
         },
         allowedWidths,
       );
-      return withSecurityHeaders(response);
+      return withSecurityHeaders(response, request);
     }
 
-    return withSecurityHeaders(await handler.fetch(request, env, ctx));
+    return withSecurityHeaders(await handler.fetch(request, env, ctx), request);
   },
 };
 

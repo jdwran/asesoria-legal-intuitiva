@@ -6,6 +6,7 @@ const projectRoot = path.resolve(import.meta.dirname, "..");
 const hostname = "127.0.0.1";
 const port = process.env.SITES_SMOKE_PORT ?? "4179";
 const origin = `http://${hostname}:${port}`;
+const registrationToken = "smoke-registration-token-with-more-than-thirty-two-characters";
 const output = [];
 
 const server = spawn(
@@ -20,6 +21,8 @@ const server = spawn(
       PRIMARY_AI_API_KEY: "",
       PRIMARY_AI_BASE_URL: "",
       PRIMARY_AI_MODEL: "",
+      ACCOUNT_REGISTRATION_TOKEN: registrationToken,
+      CASE_DATA_ENCRYPTION_KEY: "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY",
     },
     stdio: ["ignore", "pipe", "pipe"],
   },
@@ -53,6 +56,53 @@ try {
   const rootResponse = await waitForServer();
   assert.equal(rootResponse.status, 200);
   assert.match(rootResponse.headers.get("content-security-policy") ?? "", /default-src/);
+  const rootHtml = await rootResponse.text();
+  assert.doesNotMatch(rootHtml, /href=["'][^"']*\/acceso/i);
+
+  const directAccessResponse = await fetch(`${origin}/acceso`, { redirect: "manual" });
+  assert.equal(directAccessResponse.status, 404);
+
+  const invalidInviteResponse = await fetch(`${origin}/acceso/token-invalido`, {
+    redirect: "manual",
+  });
+  assert.equal(invalidInviteResponse.status, 404);
+  assert.equal(invalidInviteResponse.headers.get("referrer-policy"), "no-referrer");
+  assert.match(invalidInviteResponse.headers.get("cache-control") ?? "", /no-store/);
+
+  const inviteResponse = await fetch(`${origin}/acceso/${registrationToken}`, {
+    redirect: "manual",
+  });
+  assert.equal(inviteResponse.status, 303);
+  assert.equal(inviteResponse.headers.get("location"), `${origin}/acceso`);
+  assert.equal(inviteResponse.headers.get("referrer-policy"), "no-referrer");
+  const gateCookie = inviteResponse.headers.get("set-cookie")?.split(";", 1)[0];
+  assert.ok(gateCookie?.startsWith("ol_registration_gate="));
+
+  const portalResponse = await fetch(`${origin}/acceso`, {
+    headers: {
+      Cookie: gateCookie,
+      "oai-authenticated-user-id": "smoke-user",
+      "oai-authenticated-user-email": "smoke@example.com",
+    },
+    redirect: "manual",
+  });
+  assert.equal(portalResponse.status, 200);
+  assert.match(await portalResponse.text(), /Activa el guardado privado de tus sesiones/);
+
+  const anonymousSessionResponse = await fetch(`${origin}/api/session`);
+  assert.equal(anonymousSessionResponse.status, 401);
+
+  const ungatedAccountResponse = await fetch(`${origin}/api/account`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Origin: origin,
+      "oai-authenticated-user-id": "smoke-user",
+      "oai-authenticated-user-email": "smoke@example.com",
+    },
+    body: JSON.stringify({ consent: true }),
+  });
+  assert.equal(ungatedAccountResponse.status, 404);
 
   const apiResponse = await fetch(`${origin}/api/orientar`, {
     method: "POST",
@@ -74,8 +124,7 @@ try {
   assert.equal(payload.mode, "demo");
   assert.equal(payload.provider, "demo");
   assert.equal(payload.category, "laboral");
-  console.log("Sites smoke passed: root and offline orientation API returned 200.");
+  console.log("Sites smoke passed: anonymous flow, private invite and offline orientation are healthy.");
 } finally {
   if (server.exitCode === null) server.kill("SIGTERM");
 }
-

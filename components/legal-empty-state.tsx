@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { type ReactNode, useRef, useState } from "react";
 import {
   AlertTriangle,
   ChevronDown,
@@ -55,6 +55,7 @@ const categoryLabels = {
 } as const;
 
 type LegalEmptyStateProps = {
+  accountIndicator?: ReactNode;
   story: string;
   city: string;
   processingConsent: boolean;
@@ -67,6 +68,7 @@ type LegalEmptyStateProps = {
 };
 
 export function LegalEmptyState({
+  accountIndicator,
   story,
   city,
   processingConsent,
@@ -131,16 +133,19 @@ export function LegalEmptyState({
   return (
     <div className="flex min-h-[100dvh] flex-col bg-[#f4f3ee] text-[#102238]">
       <header className="shrink-0 border-b border-slate-200/80 bg-[#fbfaf7] px-4 py-4 sm:px-6">
-        <div className="mx-auto flex max-w-3xl items-center gap-3">
-          <ShieldCheck className="size-8 shrink-0 text-emerald-600" strokeWidth={2} />
-          <div className="min-w-0">
-            <h1 className="font-serif text-xl font-bold tracking-tight text-[#102238] sm:text-2xl">
-              Orientador Legal
-            </h1>
-            <p className="mt-0.5 text-sm text-muted-foreground">
-              Asesoría gratuita, rápida y en palabras sencillas.
-            </p>
+        <div className="mx-auto flex max-w-3xl items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <ShieldCheck className="size-8 shrink-0 text-emerald-600" strokeWidth={2} />
+            <div className="min-w-0">
+              <h1 className="font-serif text-xl font-bold tracking-tight text-[#102238] sm:text-2xl">
+                Orientador Legal
+              </h1>
+              <p className="mt-0.5 text-sm text-muted-foreground">
+                Asesoría gratuita, rápida y en palabras sencillas.
+              </p>
+            </div>
           </div>
+          {accountIndicator}
         </div>
       </header>
 

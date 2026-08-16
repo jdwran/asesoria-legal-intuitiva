@@ -9,11 +9,13 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "prebuild:sites": "node scripts/clean-sites-build.mjs",
     "build:sites": "vinext build",
+    "smoke:sites": "node scripts/smoke-sites.mjs",
     "start:sites": "vinext start",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test lib/legal-data.test.mjs"
+    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",

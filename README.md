@@ -40,8 +40,8 @@ La IA propone; la persona confirma. Cada recomendación debe poder rastrearse ha
 - Fuentes oficiales sugeridas con enlace original; esta versión no afirma haber consultado automáticamente su contenido.
 - Enlaces a directorios y canales oficiales de recursos gratuitos, sin inventar sedes ni disponibilidad local.
 - Generación y descarga de un borrador y de una carpeta textual del caso.
-- Integración opcional con OpenAI mediante salida estructurada.
-- Modo demo determinista cuando no existe una clave o la API no está disponible.
+- Cadena opcional de IA: modelo abierto en un endpoint compatible, OpenAI como respaldo y salida estructurada validada.
+- Modo demo determinista cuando no existe una clave o ningún proveedor está disponible.
 - Diseño adaptable a escritorio, tableta y móvil.
 
 ## Límites honestos de esta versión
@@ -58,8 +58,8 @@ La IA propone; la persona confirma. Cada recomendación debe poder rastrearse ha
 - Next.js App Router + TypeScript
 - Tailwind CSS
 - shadcn/ui + Lucide
-- OpenAI Responses API con Structured Outputs y Zod
-- Despliegue objetivo: Vercel
+- Chat Completions compatible para el modelo abierto, OpenAI Responses API como respaldo, Structured Outputs y Zod
+- Despliegue objetivo: OpenAI Sites / Cloudflare Workers
 
 ## Instalación
 
@@ -71,16 +71,25 @@ npm run dev
 
 Abre `http://localhost:3000`.
 
-La clave es opcional. Sin ella, el producto conserva el recorrido completo con respuestas deterministas de demostración.
+Las claves son opcionales. Sin ellas, el producto conserva el recorrido completo con respuestas deterministas de demostración. Si ambos proveedores están configurados, siempre intenta primero el modelo abierto y solo consume OpenAI cuando el primario falla o supera su tiempo límite.
 
 ```env
+# Ejemplo gratuito alojado: crea una clave en Cerebras Inference Cloud.
+PRIMARY_AI_BASE_URL=https://api.cerebras.ai/v1
+PRIMARY_AI_API_KEY=tu_clave_cerebras
+PRIMARY_AI_MODEL=gpt-oss-120b
+PRIMARY_AI_TIMEOUT_MS=12000
+
+# Respaldo de menor costo.
 OPENAI_API_KEY=tu_clave
-OPENAI_MODEL=gpt-5.4-mini
+OPENAI_MODEL=gpt-5.4-nano
+OPENAI_TIMEOUT_MS=25000
 NEXT_PUBLIC_SITE_URL=http://localhost:3000
 ```
 
-Nunca expongas `OPENAI_API_KEY` al navegador. La llamada se ejecuta en `app/api/orientar/route.ts`.
-La integración envía `store: false`, limita la salida y exige consentimiento en la interfaz. Esto no sustituye revisar las políticas de tratamiento y retención del proveedor antes de usar datos reales.
+Para usar Ollama en desarrollo, cambia las tres variables `PRIMARY_AI_*` a `http://127.0.0.1:11434/v1`, una clave ficticia como `ollama` y el modelo instalado. `localhost` no es accesible desde Sites: allí el primario debe ser un endpoint HTTPS alojado.
+
+Nunca expongas `PRIMARY_AI_API_KEY` ni `OPENAI_API_KEY` al navegador y no definas `OPENAI_BASE_URL`: cada cliente tiene una URL separada para que el respaldo no se desvíe al proveedor primario. Las llamadas se ejecutan en `app/api/orientar/route.ts`. OpenAI recibe `store: false`; ambos proveedores tienen límites de salida, tiempo y cero reintentos automáticos. Esto no sustituye revisar las políticas de tratamiento y retención de cada proveedor antes de usar datos reales.
 
 ## Recorrido de demo (4 minutos)
 
@@ -196,8 +205,8 @@ Un marketplace de calificación de abogados asume un mercado de oferta visible q
 ## Stack
 
 - Next.js (App Router) + TypeScript + Tailwind + shadcn/ui
-- LLM vía API (Anthropic/OpenAI) para clasificación de casos y generación de respuesta
-- Despliegue en Vercel
+- Modelo abierto vía API compatible, OpenAI como respaldo y modo determinista final
+- Despliegue en OpenAI Sites / Cloudflare Workers
 
 ## Estado del proyecto
 

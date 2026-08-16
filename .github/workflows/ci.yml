@@ -55,3 +55,6 @@ jobs:
 
       - name: Build Sites deployment
         run: npm run build:sites
+
+      - name: Smoke-test Sites without AI egress
+        run: npm run smoke:sites

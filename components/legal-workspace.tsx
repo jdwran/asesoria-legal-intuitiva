@@ -76,8 +76,65 @@ import {
 } from "@/lib/legal-data";
 
 type NavKey = "resumen" | CaseElementType | "ruta";
+type AnalysisProvider = "demo" | "open" | "openai";
+type OrientationApiResponse = LegalOrientation & {
+  mode?: "demo" | "ai";
+  degraded?: boolean;
+  provider?: AnalysisProvider;
+  fallbackUsed?: boolean;
+};
 
 const demoStory = "Me quieren desalojar del apartamento en cinco días. Me avisaron por WhatsApp y tengo contrato escrito.";
+const ORIENTATION_REQUEST_TIMEOUT_MS = 90_000;
+
+async function requestOrientation(input: {
+  story: string;
+  city: string;
+  processingConsent: true;
+}): Promise<OrientationApiResponse> {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(
+    () => controller.abort(new DOMException("La solicitud tardó demasiado.", "TimeoutError")),
+    ORIENTATION_REQUEST_TIMEOUT_MS,
+  );
+
+  try {
+    const response = await fetch("/api/orientar", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+      signal: controller.signal,
+    });
+    const responseText = await response.text();
+    let payload: unknown;
+
+    try {
+      payload = responseText ? JSON.parse(responseText) : null;
+    } catch {
+      payload = null;
+    }
+
+    if (!response.ok) {
+      const serverMessage =
+        payload && typeof payload === "object" && "error" in payload && typeof payload.error === "string"
+          ? payload.error
+          : `No fue posible analizar el caso (${response.status}).`;
+      throw new Error(serverMessage);
+    }
+    if (!payload || typeof payload !== "object") {
+      throw new Error("El servidor respondió en un formato inesperado.");
+    }
+
+    return payload as OrientationApiResponse;
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error("El análisis tardó demasiado. Intenta nuevamente en unos minutos.");
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
 
 const navGroups: Array<{
   label: string;
@@ -251,6 +308,8 @@ export function LegalWorkspace() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isRefining, setIsRefining] = useState(false);
   const [analysisMode, setAnalysisMode] = useState<"demo" | "ai">("demo");
+  const [analysisProvider, setAnalysisProvider] = useState<AnalysisProvider>("demo");
+  const [analysisFallbackUsed, setAnalysisFallbackUsed] = useState(false);
   const [analysisDegraded, setAnalysisDegraded] = useState(false);
   const [notice, setNotice] = useState("Expediente guardado");
   const [formError, setFormError] = useState("");
@@ -433,17 +492,12 @@ Este es un borrador informativo. Revisa los datos y, si es posible, solicita ori
     setNotice("Organizando tu relato…");
 
     try {
-      const response = await fetch("/api/orientar", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ story: cleanStory, city: cleanCity, processingConsent }),
-      });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error ?? "No fue posible analizar el caso");
-      const result = payload as LegalOrientation & { mode?: "demo" | "ai"; degraded?: boolean };
+      const result = await requestOrientation({ story: cleanStory, city: cleanCity, processingConsent: true });
       setOrientation(result);
       setSavedStory(cleanStory);
       setAnalysisMode(result.mode === "ai" ? "ai" : "demo");
+      setAnalysisProvider(result.provider ?? (result.mode === "ai" ? "openai" : "demo"));
+      setAnalysisFallbackUsed(Boolean(result.fallbackUsed));
       setAnalysisDegraded(Boolean(result.degraded));
       const detectedFacts = result.extractedFacts.map((fact, index) => ({
           id: `fact-${Date.now()}-${index}`,
@@ -472,7 +526,15 @@ Este es un borrador informativo. Revisa los datos y, si es posible, solicita ori
       setCompletedSteps([]);
       setActiveSection("resumen");
       setNewCaseOpen(false);
-      setNotice(result.degraded ? "IA no disponible · se mostró una ruta de demostración" : "Caso organizado · revisa lo que entendimos");
+      setNotice(
+        result.degraded
+          ? "IA no disponible · se mostró una ruta de demostración"
+          : result.provider === "open"
+            ? "Caso organizado con un modelo abierto · revisa lo que entendimos"
+            : result.fallbackUsed
+              ? "El modelo abierto no respondió · OpenAI organizó el caso"
+              : "Caso organizado con OpenAI · revisa lo que entendimos",
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : "No pudimos analizar el caso.";
       setFormError(message);
@@ -510,24 +572,28 @@ Este es un borrador informativo. Revisa los datos y, si es posible, solicita ori
       const enrichedStory = `${savedStory}\n\nInformación adicional confirmada:\n${confirmed
         .map((item) => `- ${item.question} ${item.answer}`)
         .join("\n")}`;
-      const response = await fetch("/api/orientar", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ story: enrichedStory, city: city.trim(), processingConsent: true }),
-      });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error ?? "No fue posible actualizar la ruta");
-      const result = payload as LegalOrientation & { mode?: "demo" | "ai"; degraded?: boolean };
+      const result = await requestOrientation({ story: enrichedStory, city: city.trim(), processingConsent: true });
       setOrientation(result);
       setAnalysisMode(result.mode === "ai" ? "ai" : "demo");
+      setAnalysisProvider(result.provider ?? (result.mode === "ai" ? "openai" : "demo"));
+      setAnalysisFallbackUsed(Boolean(result.fallbackUsed));
       setAnalysisDegraded(Boolean(result.degraded));
       setCompletedSteps([]);
       setElements((current) => [...current, ...answerElements]);
       setTriageSaved(true);
       setTriageError("");
-      setNotice(result.degraded ? "Respuestas guardadas · la ruta mostrada es solo demostrativa" : "Ruta actualizada con tus respuestas");
-    } catch {
-      setTriageError("No se guardaron las respuestas ni se actualizó la ruta. Intenta de nuevo.");
+      setNotice(
+        result.degraded
+          ? "Respuestas guardadas · la ruta mostrada es solo demostrativa"
+          : result.provider === "open"
+            ? "Ruta actualizada con el modelo abierto"
+            : result.fallbackUsed
+              ? "Modelo abierto no disponible · ruta actualizada con OpenAI"
+              : "Ruta actualizada con OpenAI",
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Intenta de nuevo.";
+      setTriageError(`No se guardaron las respuestas ni se actualizó la ruta. ${message}`);
       setNotice("No se guardaron las respuestas; intenta de nuevo");
     } finally {
       setIsRefining(false);
@@ -733,7 +799,13 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
                     </span>
                     <span className="flex items-center gap-1.5">
                       <Sparkles className="size-3.5 text-violet-500" />
-                      {analysisMode === "ai" ? "Organizado con IA" : "Modo demostración"}
+                      {analysisMode === "demo"
+                        ? "Modo demostración"
+                        : analysisProvider === "open"
+                          ? "Organizado con IA abierta"
+                          : analysisFallbackUsed
+                            ? "OpenAI · respaldo"
+                            : "Organizado con OpenAI"}
                     </span>
                   </div>
                 )}
@@ -1303,7 +1375,7 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
                 className="mt-0.5 size-4 accent-[#173f6b]"
               />
               <span className="text-xs leading-5 text-slate-600">
-                Autorizo procesar este relato para organizar el caso. Si la IA está conectada, el texto se enviará al proveedor configurado. La integración solicita no almacenar la respuesta, pero pueden aplicar sus políticas de tratamiento y retención. Esta herramienta no es un abogado: el envío no crea una relación abogado–cliente ni secreto profesional. Evitaré incluir datos innecesarios.
+                Autorizo procesar este relato para organizar el caso. Si hay un proveedor abierto configurado, el texto se enviará primero allí y, solo si falla, a OpenAI; si no lo hay, se usará directamente OpenAI. Cada proveedor puede aplicar sus políticas de tratamiento y retención; cuando se usa OpenAI, la integración solicita no almacenar la respuesta. Esta herramienta no es un abogado: el envío no crea una relación abogado–cliente ni secreto profesional. Evitaré incluir datos innecesarios.
               </span>
             </label>
             {formError && (

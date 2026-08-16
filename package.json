@@ -15,7 +15,7 @@
     "start:sites": "vinext start",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test"
+    "test": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",

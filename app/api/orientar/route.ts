@@ -13,15 +13,10 @@ import {
   getSafeDocumentKind,
   officialSources,
 } from "@/lib/legal-data";
+import { orientationRequestSchema } from "@/lib/orientation-request";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-const requestSchema = z.object({
-  story: z.string().trim().min(12).max(6000),
-  city: z.string().trim().min(2).max(120).default("Colombia"),
-  processingConsent: z.literal(true),
-});
 
 const orientationSchema = z.object({
   caseTitle: z.string(),
@@ -278,14 +273,14 @@ export async function POST(request: Request) {
     );
   }
 
-  let body: z.infer<typeof requestSchema>;
+  let body: z.infer<typeof orientationRequestSchema>;
 
   try {
     const rawBody = await request.text();
     if (Buffer.byteLength(rawBody, "utf8") > MAX_REQUEST_BYTES) {
       return json({ error: "La solicitud supera el tamaño permitido." }, 413);
     }
-    body = requestSchema.parse(JSON.parse(rawBody));
+    body = orientationRequestSchema.parse(JSON.parse(rawBody));
   } catch {
     return json({ error: "Revisa el relato y el municipio antes de continuar." }, 400);
   }

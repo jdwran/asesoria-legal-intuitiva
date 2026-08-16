@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   ArrowRight,
@@ -21,7 +21,6 @@ import {
   Info,
   Landmark,
   LoaderCircle,
-  LockKeyhole,
   MapPin,
   Menu,
   MoreHorizontal,
@@ -38,6 +37,7 @@ import {
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { LegalEmptyState } from "@/components/legal-empty-state";
 import {
   Dialog,
   DialogContent,
@@ -74,6 +74,12 @@ import {
   LegalOrientation,
   type OfficialSource,
 } from "@/lib/legal-data";
+import {
+  EXTERNAL_PROCESSING_COPY,
+  ORIENTATION_FORM_ERRORS,
+  PROCESSING_CONSENT_COPY,
+  isOrientationFormReady,
+} from "@/lib/orientation-form";
 
 type NavKey = "resumen" | CaseElementType | "ruta";
 type AnalysisProvider = "demo" | "open" | "openai";
@@ -85,7 +91,6 @@ type OrientationApiResponse = LegalOrientation & {
   fallbackUsed?: boolean;
 };
 
-const demoStory = "Me quieren desalojar del apartamento en cinco días. Me avisaron por WhatsApp y tengo contrato escrito.";
 const ORIENTATION_REQUEST_TIMEOUT_MS = 90_000;
 
 async function requestOrientation(input: {
@@ -283,16 +288,13 @@ function CaseNavigation({
           <Plus className="size-4" />
           Agregar al expediente
         </Button>
-        <div className="mt-3 flex items-center justify-center gap-1.5 text-[11px] text-slate-500">
-          <LockKeyhole className="size-3" />
-          La app no conserva el expediente al cerrar
-        </div>
       </div>
     </div>
   );
 }
 
 export function LegalWorkspace() {
+  const resultHeadingRef = useRef<HTMLHeadingElement>(null);
   const [activeSection, setActiveSection] = useState<NavKey>("resumen");
   const [elements, setElements] = useState<CaseElement[]>(initialElements);
   const [orientation, setOrientation] = useState<LegalOrientation>(initialOrientation);
@@ -302,9 +304,9 @@ export function LegalWorkspace() {
   const [caseDialogMode, setCaseDialogMode] = useState<"new" | "edit">("new");
   const [addOpen, setAddOpen] = useState(false);
   const [documentOpen, setDocumentOpen] = useState(false);
-  const [story, setStory] = useState(demoStory);
-  const [savedStory, setSavedStory] = useState(demoStory);
-  const [city, setCity] = useState("Bogotá, D. C.");
+  const [story, setStory] = useState("");
+  const [savedStory, setSavedStory] = useState("");
+  const [city, setCity] = useState("");
   const [processingConsent, setProcessingConsent] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isRefining, setIsRefining] = useState(false);
@@ -347,6 +349,14 @@ export function LegalWorkspace() {
     () => elements.filter((element) => element.type === "pruebas").length,
     [elements],
   );
+
+  useEffect(() => {
+    if (!hasAnalyzedCase) return;
+    const frame = window.requestAnimationFrame(() => {
+      resultHeadingRef.current?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [hasAnalyzedCase]);
 
   const filteredElements = useMemo(() => {
     if (activeSection === "resumen" || activeSection === "ruta") return [];
@@ -478,15 +488,15 @@ Este es un borrador informativo. Revisa los datos y, si es posible, solicita ori
     const cleanStory = story.trim();
     const cleanCity = city.trim();
     if (cleanStory.length < 12) {
-      setFormError("Cuéntanos un poco más: el relato debe tener al menos 12 caracteres.");
+      setFormError(ORIENTATION_FORM_ERRORS.story);
       return;
     }
     if (cleanCity.length < 2) {
-      setFormError("Escribe un municipio o ciudad para orientar los canales de consulta.");
+      setFormError(ORIENTATION_FORM_ERRORS.city);
       return;
     }
     if (!processingConsent) {
-      setFormError("Necesitamos tu autorización para procesar el relato.");
+      setFormError(ORIENTATION_FORM_ERRORS.consent);
       return;
     }
     setFormError("");
@@ -692,8 +702,33 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
   const sectionTitle =
     navGroups.flatMap((group) => group.items).find((item) => item.id === activeSection)?.label ?? "Vista general";
 
+  if (!hasAnalyzedCase) {
+    return (
+      <LegalEmptyState
+        story={story}
+        city={city}
+        processingConsent={processingConsent}
+        isAnalyzing={isAnalyzing}
+        formError={formError}
+        onStoryChange={(nextStory) => {
+          setStory(nextStory);
+          setFormError("");
+        }}
+        onCityChange={(nextCity) => {
+          setCity(nextCity);
+          setFormError("");
+        }}
+        onConsentChange={(nextProcessingConsent) => {
+          setProcessingConsent(nextProcessingConsent);
+          setFormError("");
+        }}
+        onSubmit={analyzeCase}
+      />
+    );
+  }
+
   return (
-    <div className="min-h-screen bg-[#f4f3ee] text-slate-950">
+    <div className="min-h-[100dvh] bg-[#f4f3ee] text-slate-950">
       <div className="sr-only" role="status" aria-live="polite">{notice}</div>
       <header className="sticky top-0 z-40 flex h-16 items-center border-b border-slate-200/90 bg-[#fbfaf7]/95 px-4 backdrop-blur md:px-6">
         <div className="flex min-w-0 flex-1 items-center gap-3">
@@ -767,8 +802,8 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
         </div>
       </header>
 
-      <div className="grid min-h-[calc(100vh-4rem)] lg:grid-cols-[270px_minmax(0,1fr)] 2xl:grid-cols-[270px_minmax(560px,1fr)_360px]">
-        <aside className="sticky top-16 hidden h-[calc(100vh-4rem)] bg-[#102238] lg:block">
+      <div className="grid min-h-[calc(100dvh-4rem)] lg:grid-cols-[270px_minmax(0,1fr)] 2xl:grid-cols-[270px_minmax(560px,1fr)_360px]">
+        <aside className="sticky top-16 hidden h-[calc(100dvh-4rem)] bg-[#102238] lg:block">
           <CaseNavigation
             activeSection={activeSection}
             setActiveSection={setActiveSection}
@@ -789,7 +824,11 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
                   <ChevronRight className="size-3" />
                   <span className="text-slate-800">{sectionTitle}</span>
                 </div>
-                <h1 className="font-serif text-3xl font-semibold tracking-[-0.025em] text-[#102238] sm:text-[2.2rem]">
+                <h1
+                  ref={resultHeadingRef}
+                  tabIndex={-1}
+                  className="font-serif text-3xl font-semibold tracking-[-0.025em] text-[#102238] outline-none sm:text-[2.2rem]"
+                >
                   {activeSection === "resumen" ? orientation.caseTitle : sectionTitle}
                 </h1>
                 {activeSection === "resumen" && (
@@ -1202,7 +1241,7 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
         </main>
 
         <aside className="hidden border-l border-slate-200 bg-[#fbfaf7] 2xl:block">
-          <div className="sticky top-16 h-[calc(100vh-4rem)] overflow-y-auto px-5 py-7">
+          <div className="sticky top-16 h-[calc(100dvh-4rem)] overflow-y-auto px-5 py-7">
             <div className="mb-5 flex items-center justify-between">
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">Guía para este paso</p>
@@ -1372,7 +1411,9 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
                 placeholder="Ejemplo: trabajo en un restaurante y no me pagan hace dos meses…"
                 className="resize-none text-[15px] leading-6"
               />
-              <p className="text-xs text-slate-500">Al enviar, consultaremos el proveedor de IA configurado. Incluye solo los datos necesarios y evita documentos de identidad, direcciones, contraseñas o datos bancarios.</p>
+              <p className="text-xs text-slate-500">
+                {EXTERNAL_PROCESSING_COPY} Incluye solo los datos necesarios y evita documentos de identidad, direcciones, contraseñas o datos bancarios.
+              </p>
             </div>
             <div className="space-y-2">
               <Label htmlFor="city">Municipio o ciudad</Label>
@@ -1385,9 +1426,7 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
                 onChange={(event) => setProcessingConsent(event.target.checked)}
                 className="mt-0.5 size-4 accent-[#173f6b]"
               />
-              <span className="text-xs leading-5 text-slate-600">
-                Autorizo procesar este relato para organizar el caso. Si hay un proveedor abierto configurado, el texto se enviará primero allí y, solo si falla, a OpenAI; si no lo hay, se usará directamente OpenAI. Cada proveedor puede aplicar sus políticas de tratamiento y retención; cuando se usa OpenAI, la integración solicita no almacenar la respuesta. Esta herramienta no es un abogado: el envío no crea una relación abogado–cliente ni secreto profesional. Evitaré incluir datos innecesarios.
-              </span>
+              <span className="text-xs leading-5 text-slate-600">{PROCESSING_CONSENT_COPY}</span>
             </label>
             {formError && (
               <div role="alert" className="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">
@@ -1397,9 +1436,9 @@ Orientación preliminar con fuentes oficiales sugeridas para verificación. No r
           </div>
           <DialogFooter className="gap-2 sm:gap-0">
             <Button variant="ghost" onClick={() => setNewCaseOpen(false)}>Cancelar</Button>
-            <Button disabled={story.trim().length < 12 || city.trim().length < 2 || !processingConsent || isAnalyzing} onClick={analyzeCase} className="bg-[#173f6b] text-white hover:bg-[#102f51]">
+            <Button disabled={!isOrientationFormReady({ story, city, processingConsent }) || isAnalyzing} onClick={analyzeCase} className="bg-[#173f6b] text-white hover:bg-[#102f51]">
               {isAnalyzing ? <LoaderCircle className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
-              {isAnalyzing ? "Ordenando tu relato…" : "Organizar mi caso"}
+              {isAnalyzing ? "Organizando tu relato…" : "Organizar mi caso"}
             </Button>
           </DialogFooter>
         </DialogContent>

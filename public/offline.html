@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="es-CO">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Sin conexión — Orientador Legal</title>
+    <style>
+      :root { color-scheme: light; }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100dvh;
+        display: grid;
+        place-items: center;
+        padding: calc(1.5rem + env(safe-area-inset-top,0px)) 1.5rem calc(1.5rem + env(safe-area-inset-bottom,0px));
+        background: #f4f3ee;
+        color: #0f172a;
+        font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      }
+      main { max-width: 26rem; text-align: center; }
+      .mark {
+        display: grid;
+        place-items: center;
+        width: 2.75rem;
+        height: 2.75rem;
+        margin: 0 auto 1rem;
+        border-radius: 0.85rem;
+        background: #173f6b;
+      }
+      h1 { margin: 0 0 0.5rem; font-size: 1.35rem; font-weight: 600; color: #102238; }
+      p { margin: 0 0 0.75rem; font-size: 0.95rem; line-height: 1.55; color: #475569; }
+      .note { font-size: 0.8rem; color: #64748b; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <span class="mark" aria-hidden="true">
+        <svg
+          width="22"
+          height="22"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="#6ee7b7"
+          stroke-width="1.75"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <path
+            d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"
+          />
+          <path d="m9 12 2 2 4-4" />
+        </svg>
+      </span>
+      <h1>Sin conexión</h1>
+      <p>
+        Orientador Legal necesita internet para organizar tu relato: el análisis y las fuentes oficiales se consultan
+        en línea.
+      </p>
+      <p class="note">
+        Si escribiste algo y se perdió, vuelve a intentarlo cuando tengas señal. Los casos y comparendos que ya
+        guardaste siguen en este dispositivo y no se envían a ninguna cuenta.
+      </p>
+    </main>
+  </body>
+</html>

@@ -1,6 +1,5 @@
 # Orientador Legal
 
-<<<<<<< HEAD
 **De tu historia a un expediente listo para actuar.**
 
 MVP para Colombia Tech Week 2026 · Track 02 — Tecnología para la Justicia.
@@ -40,8 +39,8 @@ La IA propone; la persona confirma. Cada recomendación debe poder rastrearse ha
 - Fuentes oficiales sugeridas con enlace original; esta versión no afirma haber consultado automáticamente su contenido.
 - Enlaces a directorios y canales oficiales de recursos gratuitos, sin inventar sedes ni disponibilidad local.
 - Generación y descarga de un borrador y de una carpeta textual del caso.
-- Cadena opcional de IA: modelo abierto en un endpoint compatible, OpenAI como respaldo y salida estructurada validada.
-- Modo demo determinista cuando no existe una clave o ningún proveedor está disponible.
+- Integración opcional con OpenAI mediante salida estructurada.
+- Modo demo determinista cuando no existe una clave o la API no está disponible.
 - Diseño adaptable a escritorio, tableta y móvil.
 
 ## Límites honestos de esta versión
@@ -58,8 +57,8 @@ La IA propone; la persona confirma. Cada recomendación debe poder rastrearse ha
 - Next.js App Router + TypeScript
 - Tailwind CSS
 - shadcn/ui + Lucide
-- Chat Completions compatible para el modelo abierto, OpenAI Responses API como respaldo, Structured Outputs y Zod
-- Despliegue objetivo: OpenAI Sites / Cloudflare Workers
+- OpenAI Responses API con Structured Outputs y Zod
+- Despliegue objetivo: Vercel
 
 ## Instalación
 
@@ -71,27 +70,16 @@ npm run dev
 
 Abre `http://localhost:3000`.
 
-Las claves son opcionales. Sin ellas, el producto conserva el recorrido completo con respuestas deterministas de demostración. Si ambos proveedores están configurados, siempre intenta primero el modelo abierto y solo consume OpenAI cuando el primario falla o supera su tiempo límite.
-
-En producción configura `AI_REQUIRE_PROVIDER=1` para devolver un error temporal cuando todos los proveedores estén indisponibles, en lugar de presentar una clasificación de demostración. `AI_OFFLINE=1` queda reservado para pruebas locales y CI.
+La clave es opcional. Sin ella, el producto conserva el recorrido completo con respuestas deterministas de demostración.
 
 ```env
-# Ejemplo gratuito alojado: crea una clave en Cerebras Inference Cloud.
-PRIMARY_AI_BASE_URL=https://api.cerebras.ai/v1
-PRIMARY_AI_API_KEY=tu_clave_cerebras
-PRIMARY_AI_MODEL=gpt-oss-120b
-PRIMARY_AI_TIMEOUT_MS=12000
-
-# Respaldo de menor costo.
 OPENAI_API_KEY=tu_clave
-OPENAI_MODEL=gpt-5.4-nano
-OPENAI_TIMEOUT_MS=25000
+OPENAI_MODEL=gpt-5.4-mini
 NEXT_PUBLIC_SITE_URL=http://localhost:3000
 ```
 
-Para usar Ollama en desarrollo, cambia las tres variables `PRIMARY_AI_*` a `http://127.0.0.1:11434/v1`, una clave ficticia como `ollama` y el modelo instalado. `localhost` no es accesible desde Sites: allí el primario debe ser un endpoint HTTPS alojado.
-
-Nunca expongas `PRIMARY_AI_API_KEY` ni `OPENAI_API_KEY` al navegador y no definas `OPENAI_BASE_URL`: cada cliente tiene una URL separada para que el respaldo no se desvíe al proveedor primario. Las llamadas se ejecutan en `app/api/orientar/route.ts`. OpenAI recibe `store: false`; ambos proveedores tienen límites de salida, tiempo y cero reintentos automáticos. Esto no sustituye revisar las políticas de tratamiento y retención de cada proveedor antes de usar datos reales.
+Nunca expongas `OPENAI_API_KEY` al navegador. La llamada se ejecuta en `app/api/orientar/route.ts`.
+La integración envía `store: false`, limita la salida y exige consentimiento en la interfaz. Esto no sustituye revisar las políticas de tratamiento y retención del proveedor antes de usar datos reales.
 
 ## Recorrido de demo (4 minutos)
 
@@ -181,44 +169,3 @@ Fuera del MVP: ingerir toda la jurisprudencia nacional, radicar automáticamente
 ## Pitch
 
 > Orientador Legal no pretende reemplazar al abogado. Convierte una historia difícil de contar en una carpeta clara, verificable y lista para actuar o pedir ayuda gratuita.
-=======
-Proyecto para el hackathon **Colombia Tech Week 2026** — track *Justicia: democratizar el acceso a asesoría legal para quienes no pueden pagar un abogado*.
-
-## El problema
-
-El cuello de botella real del acceso a justicia para población de bajos ingresos no es elegir entre abogados. Es no saber si su problema tiene solución legal, y no saber que existen canales gratuitos: defensoría pública, consultorios jurídicos universitarios, personerías, comisarías de familia, casas de justicia.
-
-## La solución
-
-Un asistente conversacional que recibe el problema de la persona en lenguaje coloquial y responde con tres cosas: qué derecho la ampara, qué hacer ahora, y a qué entidad gratuita acudir — además de generar el documento base (derecho de petición, tutela, queja) ya diligenciado con sus datos.
-
-## Cómo funciona
-
-1. La persona escribe su problema en lenguaje simple ("me quieren desalojar sin avisarme", "no me pagan el sueldo hace dos meses").
-2. Un LLM clasifica el caso (laboral, arrendamiento, familia, otros) y hace máximo dos preguntas de triage si falta información clave.
-3. Devuelve la respuesta en tres tarjetas separadas: **Tu derecho** / **Qué hacer ahora** / **A dónde ir gratis**.
-4. "A dónde ir gratis" usa un directorio curado y verificado de recursos gratuitos (no un marketplace de calificación de abogados: aquí no hay problema de oferta que resolver, sino de información y direccionamiento).
-5. Genera un documento descargable pre-llenado con los datos ya provistos en la conversación.
-
-## Por qué así
-
-Un marketplace de calificación de abogados asume un mercado de oferta visible que el usuario ya sabe que debe comparar. En este segmento ese mercado no existe desde la perspectiva del usuario: el problema no es elegir, es no saber que hay a quién acudir gratis. Este producto ataca esa barrera de información directamente, es demostrable en vivo, y no depende de reviews ni de datos históricos para funcionar desde el primer uso.
-
-## Stack
-
-- Next.js (App Router) + TypeScript + Tailwind + shadcn/ui
-- Modelo abierto vía API compatible, OpenAI como respaldo y modo determinista final
-- Despliegue en OpenAI Sites / Cloudflare Workers
-
-## Estado del proyecto
-
-En construcción durante el hackathon (36 horas, agosto de 2026). Este repo arranca con la definición del producto; el código base se genera y se sube durante el evento.
-
-## Instalación
-
-_Se completa cuando el código base esté generado._
-
-## Licencia
-
-MIT — ver [LICENSE](LICENSE).
->>>>>>> d2631d5b9c7c98b8c15174469897778a9303c142

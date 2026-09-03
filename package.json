@@ -2,20 +2,12 @@
   "name": "orientador-legal",
   "version": "0.1.0",
   "private": true,
-  "type": "module",
-  "engines": {
-    "node": ">=22.13.0"
-  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "prebuild:sites": "node scripts/clean-sites-build.mjs",
-    "build:sites": "vinext build",
-    "smoke:sites": "node scripts/smoke-sites.mjs",
-    "start:sites": "vinext start",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test"
+    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test lib/legal-data.test.mjs lib/traffic-fines.test.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
@@ -24,6 +16,7 @@
     "lucide-react": "^1.31.0",
     "next": "16.3.1",
     "openai": "^7.4.0",
+    "puppeteer": "^25.9.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "shadcn": "^4.18.0",
@@ -32,21 +25,13 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "^1.37.1",
-    "@openai/sites-vite-plugin": "^0.1.0",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "@vitejs/plugin-react": "^6.0.2",
-    "@vitejs/plugin-rsc": "^0.5.34",
     "eslint": "^9",
     "eslint-config-next": "16.3.1",
-    "react-server-dom-webpack": "^19.2.8",
     "tailwindcss": "^4",
-    "typescript": "^5",
-    "vinext": "^1.0.0-beta.2",
-    "vite": "^8.0.13",
-    "wrangler": "^4.92.0"
+    "typescript": "^5"
   }
 }

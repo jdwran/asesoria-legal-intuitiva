@@ -15,9 +15,6 @@
 
 # next.js
 /.next/
-/dist/
-/.vinext/
-/.wrangler/
 /out/
 
 # production
@@ -44,3 +41,5 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 .vscode
+.claude
+chrome/

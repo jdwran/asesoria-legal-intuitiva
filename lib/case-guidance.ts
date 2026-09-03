@@ -239,6 +239,7 @@ const categoryByDocumentKind: Record<DocumentKind, LegalCategory> = {
   "reclamacion-laboral": "laboral",
   "solicitud-salud": "salud",
   "medida-proteccion": "familia",
+  "solicitud-alimentos": "familia",
   "resumen-familia": "familia",
   "relato-denuncia": "penal",
   "solicitud-administrativa": "administrativo",

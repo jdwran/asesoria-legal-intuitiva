@@ -591,12 +591,428 @@ export function FinesTracker({ onBack }: { onBack: () => void }) {
       subtitle="Consulta oficial directa, control de descuentos y alarmas"
       onBack={onBack}
     >
-      {/* 1. SECCIÓN SUPERIOR: HISTORIAL DE OBLIGACIONES GUARDADAS (DESPLEGABLE CON TOTALES Y CANTIDADES) */}
+      {/* 1. SECCIÓN PRINCIPAL: CONSULTA DIRECTA OFICIAL AL SIMIT (ARRIBA) */}
+      <section className="app-card space-y-3.5">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <div className="grid size-8 place-items-center rounded-xl bg-amber-50 text-amber-700">
+              <Car className="size-4" />
+            </div>
+            <div>
+              <h2 className="font-display text-sm font-bold text-slate-900">
+                Consulta Oficial SIMIT
+              </h2>
+              <p className="text-[11px] text-slate-500">
+                Base de datos nacional de la Federación Colombiana de Municipios
+              </p>
+            </div>
+          </div>
+          <span className="pill-badge bg-emerald-50 text-emerald-800 border border-emerald-200">
+            Conexión Oficial
+          </span>
+        </div>
+
+        {/* Selector segmentado moderno tipo iOS */}
+        <div className="grid grid-cols-2 rounded-xl bg-slate-100 p-1 text-xs font-semibold">
+          <button
+            type="button"
+            onClick={() => {
+              setLookupKind("placa");
+              setLookupError("");
+              setSimitQueryResult(null);
+              if (user.plate) setLookupValue(user.plate);
+            }}
+            className={`flex items-center justify-center gap-1.5 rounded-lg py-1.5 transition-all ${
+              lookupKind === "placa"
+                ? "bg-white text-slate-900 shadow-2xs font-bold"
+                : "text-slate-500 hover:text-slate-900"
+            }`}
+          >
+            <Car className="size-3.5" />
+            <span>Por Placa de Vehículo</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setLookupKind("documento");
+              setLookupError("");
+              setSimitQueryResult(null);
+              if (user.documentNumber) setLookupValue(user.documentNumber);
+            }}
+            className={`flex items-center justify-center gap-1.5 rounded-lg py-1.5 transition-all ${
+              lookupKind === "documento"
+                ? "bg-white text-slate-900 shadow-2xs font-bold"
+                : "text-slate-500 hover:text-slate-900"
+            }`}
+          >
+            <ShieldCheck className="size-3.5" />
+            <span>Por Cédula / Documento</span>
+          </button>
+        </div>
+
+        <div className="flex gap-2">
+          <Input
+            value={lookupValue}
+            onChange={(event) => {
+              setLookupValue(event.target.value);
+              setLookupError("");
+            }}
+            placeholder={lookupKind === "placa" ? "Ej. ABC123" : "Ej. 1065631508"}
+            inputMode={lookupKind === "placa" ? "text" : "numeric"}
+            maxLength={16}
+            className="uppercase font-mono text-sm font-bold tracking-wider flex-1 h-10"
+          />
+          <Button
+            type="button"
+            disabled={isQueryingSimit}
+            onClick={handleQuerySimit}
+            className="shrink-0 bg-slate-900 text-white hover:bg-slate-800 px-5 text-xs font-bold h-10 shadow-xs"
+          >
+            {isQueryingSimit ? (
+              <span className="flex items-center gap-1.5">
+                <LoaderCircle className="size-3.5 animate-spin" /> Consultando...
+              </span>
+            ) : (
+              <span className="flex items-center gap-1.5">
+                <Search className="size-3.5" /> Consultar
+              </span>
+            )}
+          </Button>
+        </div>
+
+        {lookupError && (
+          <p role="alert" className="flex items-center gap-2 rounded-xl bg-rose-50 p-2.5 text-xs text-rose-800 font-medium">
+            <TriangleAlert className="size-4 shrink-0 text-rose-600" />
+            <span>{lookupError}</span>
+          </p>
+        )}
+
+        {/* RESULTADOS DE LA CONSULTA DIRECTA AL SIMIT */}
+        {simitQueryResult && (
+          <div className="space-y-3.5 rounded-2xl bg-slate-50/80 p-3.5 border border-slate-200">
+            {/* Encabezado del resultado */}
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200/80 pb-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-xs font-bold text-slate-800 uppercase bg-white px-2 py-0.5 rounded-md border border-slate-200 shadow-2xs">
+                    {simitQueryResult.criterio.valor}
+                  </span>
+                  <span className="text-xs text-slate-500">
+                    {simitQueryResult.criterio.tipo === "placa" ? "Vehículo" : "Conductor"}
+                  </span>
+                </div>
+                <p className="mt-1 text-[11px] text-slate-500">
+                  Total deudas oficiales en SIMIT:{" "}
+                  <strong className="text-slate-900 font-bold">
+                    {formatCurrency(simitQueryResult.resumen.totalGeneral)}
+                  </strong>
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                {simitQueryResult.multas.length > 0 && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={handleToggleSelectAllFines}
+                    variant="outline"
+                    className="text-xs h-7 border-slate-300"
+                  >
+                    {selectedFineIds.length === simitQueryResult.multas.length ? "Deseleccionar" : "Seleccionar todo"}
+                  </Button>
+                )}
+              </div>
+            </div>
+
+            {/* Barra de Pago Masivo */}
+            {selectedFineIds.length > 0 && (
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-emerald-900 p-3 text-white shadow-sm">
+                <div>
+                  <p className="text-xs font-bold">
+                    {selectedFineIds.length} {selectedFineIds.length === 1 ? "obligación seleccionada" : "obligaciones seleccionadas"}
+                  </p>
+                  <p className="text-sm font-extrabold text-emerald-200">
+                    Total:{" "}
+                    {formatCurrency(
+                      simitQueryResult.multas
+                        .filter((m) => selectedFineIds.includes(m.id))
+                        .reduce((sum, item) => sum + item.valorPagar, 0),
+                    )}
+                  </p>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={() => handleOpenPaymentModal(undefined, "pse")}
+                    className="bg-white text-emerald-950 hover:bg-emerald-50 text-xs font-bold h-8 gap-1.5"
+                  >
+                    <CreditCard className="size-3.5 text-emerald-800" /> Pagar Selección (PSE)
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => handleOpenPaymentModal(undefined, "liquidacion_pdf")}
+                    className="bg-emerald-800/60 text-white hover:bg-emerald-800 border-emerald-700 text-xs h-8 gap-1.5"
+                  >
+                    <Download className="size-3.5" /> Cupón
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {/* Lista de Comparendos y Resoluciones */}
+            {simitQueryResult.pazSalvo ? (
+              <div className="rounded-xl bg-emerald-50/80 p-4 text-center text-emerald-900 border border-emerald-200">
+                <CheckCircle2 className="size-6 text-emerald-600 mx-auto mb-1.5" />
+                <p className="text-xs font-bold">¡Paz y Salvo Oficial!</p>
+                <p className="text-[11px] text-emerald-700 mt-0.5">
+                  No se registran comparendos ni multas pendientes en el SIMIT para {simitQueryResult.criterio.valor}.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-2.5">
+                {simitQueryResult.multas.map((m) => {
+                  const isSelected = selectedFineIds.includes(m.id);
+                  const isExpanded = expandedFineIds.includes(m.id);
+
+                  return (
+                    <div
+                      key={m.id}
+                      className={`rounded-2xl border bg-white p-3.5 transition-all shadow-2xs space-y-2.5 ${
+                        isSelected ? "border-slate-900 ring-1 ring-slate-900/10" : "border-slate-200/90"
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-start gap-2.5 min-w-0 flex-1">
+                          <button
+                            type="button"
+                            onClick={() => handleToggleFineSelection(m.id)}
+                            className="mt-0.5 shrink-0 text-slate-900 hover:opacity-80"
+                            aria-label="Seleccionar para pagar"
+                          >
+                            {isSelected ? (
+                              <CheckSquare className="size-4.5 text-slate-900" />
+                            ) : (
+                              <Square className="size-4.5 text-slate-300" />
+                            )}
+                          </button>
+
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <span
+                                className={`pill-badge ${
+                                  m.tipo === "resolucion"
+                                    ? "bg-purple-50 text-purple-800 border border-purple-200"
+                                    : m.tipo === "fotodeteccion"
+                                      ? "bg-blue-50 text-blue-800 border border-blue-200"
+                                      : "bg-amber-50 text-amber-800 border border-amber-200"
+                                }`}
+                              >
+                                {m.tipo === "resolucion"
+                                  ? "Resolución"
+                                  : m.tipo === "fotodeteccion"
+                                    ? "Fotomulta"
+                                    : "Comparendo"}
+                              </span>
+                              {m.placa && (
+                                <span className="rounded-md bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] font-bold text-slate-800 border border-slate-200">
+                                  {m.placa}
+                                </span>
+                              )}
+                              <span className="text-[11px] font-mono font-bold text-slate-600">
+                                {m.numeroResolucion ? `Res. ${m.numeroResolucion}` : `N.° ${m.numeroComparendo}`}
+                              </span>
+                            </div>
+
+                            {/* Título recortado en preview + click para expandir */}
+                            <button
+                              type="button"
+                              onClick={() => toggleExpandFine(m.id)}
+                              className="text-left w-full group/title cursor-pointer mt-1 block"
+                            >
+                              <h4 className={`font-display text-xs font-bold text-slate-900 group-hover/title:text-blue-900 transition-colors ${isExpanded ? "" : "line-clamp-1"}`}>
+                                {m.codigoInfraccion} · {m.descripcionInfraccion}
+                              </h4>
+                              <div className="flex items-center gap-1 text-[10px] text-slate-500 font-medium mt-0.5">
+                                <span className="text-slate-700 group-hover/title:underline">
+                                  {isExpanded ? "Ocultar detalle" : "Ver más detalle"}
+                                </span>
+                                <ChevronDown className={`size-3 text-slate-500 transition-transform duration-200 ${isExpanded ? "rotate-180" : ""}`} />
+                              </div>
+                            </button>
+
+                            <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                              <span className="inline-flex items-center gap-1 font-semibold text-slate-800 bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200 text-[11px]">
+                                <Calendar className="size-3 text-slate-500" />
+                                <span>Fecha comparendo: <strong>{m.fecha}</strong></span>
+                              </span>
+                              <span className="text-[11px] text-slate-500">· {m.organismoTransito} {m.departamento ? `(${m.departamento})` : ""}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Monto de la Multa en la búsqueda */}
+                        <div className="text-right shrink-0">
+                          <p className="text-[10px] text-slate-400 font-semibold uppercase">Total</p>
+                          <p className="text-sm font-extrabold text-slate-900">{formatCurrency(m.valorPagar)}</p>
+                        </div>
+                      </div>
+
+                      {/* Acordeón Plegable de Descuentos / Detalles */}
+                      {isExpanded && (
+                        <div className="rounded-xl bg-slate-50 p-2.5 text-xs space-y-1.5 border border-slate-200/80">
+                          {m.descuento50 && m.fechaLimite50 && (
+                            <div className="flex justify-between text-slate-700 text-[11px]">
+                              <span>50% Descuento (5 días hábiles):</span>
+                              <span className="font-bold text-emerald-800">
+                                {formatCurrency(m.descuento50)} (Hasta {m.fechaLimite50})
+                              </span>
+                            </div>
+                          )}
+                          {m.descuento25 && m.fechaLimite25 && (
+                            <div className="flex justify-between text-slate-600 text-[11px]">
+                              <span>25% Descuento (20 días hábiles):</span>
+                              <span className="font-semibold text-slate-800">
+                                {formatCurrency(m.descuento25)} (Hasta {m.fechaLimite25})
+                              </span>
+                            </div>
+                          )}
+                          {m.numeroResolucion && (
+                            <p className="text-[10px] text-slate-500 pt-1 border-t border-slate-200">
+                              Resolución Sancionatoria N.° {m.numeroResolucion} (Comparendo original: {m.numeroComparendo})
+                            </p>
+                          )}
+                          <p className="text-[10px] text-slate-600 pt-0.5">
+                            Organismo sancionador: <strong>{m.organismoTransito}</strong> {m.departamento ? `(${m.departamento})` : ""}
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Barra de Acciones de la Tarjeta */}
+                      <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-slate-100">
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={() => handleOpenPaymentModal([m], "pse")}
+                          className="bg-emerald-700 text-white hover:bg-emerald-800 text-[11px] font-bold h-7 gap-1"
+                        >
+                          <CreditCard className="size-3" /> Pagar PSE / Tarjeta
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleOpenPaymentModal([m], "liquidacion_pdf")}
+                          className="text-[11px] h-7 gap-1 border-slate-200 text-slate-700 hover:bg-slate-50"
+                        >
+                          <FileText className="size-3 text-slate-600" /> Cupón
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => handleSaveExtractedFine(m)}
+                          className="text-[11px] h-7 gap-1 text-slate-600 hover:text-slate-900"
+                        >
+                          <BookmarkPlus className="size-3" /> Guardar
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() =>
+                            setEmailModalFine({
+                              reference: m.numeroComparendo,
+                              kind: "comparendo",
+                              reason: `${m.codigoInfraccion} - ${m.descripcionInfraccion}`,
+                              amount: m.valorPagar,
+                              subject: m.placa || normalizeLookup(lookupValue),
+                              impositionDate: m.fecha,
+                              id: m.id,
+                            })
+                          }
+                          className="text-xs gap-1.5 text-amber-900 border-amber-300 bg-amber-50/50 hover:bg-amber-100/60 ml-auto"
+                        >
+                          <Mail className="size-3.5 text-amber-700" /> Alarma
+                        </Button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Acuerdos de Pago Extraídos de la Consulta */}
+            {simitQueryResult.acuerdos.length > 0 && (
+              <div className="space-y-2 pt-2 border-t border-slate-200">
+                <h3 className="font-display text-xs font-bold text-slate-900">
+                  Acuerdos y Convenios de Pago Registrados
+                </h3>
+                {simitQueryResult.acuerdos.map((a: SimitAcuerdoItem) => (
+                  <div key={a.id || a.numeroAcuerdo} className="rounded-xl border border-indigo-200 bg-white p-3 space-y-2 text-xs">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <span className="pill-badge bg-indigo-50 text-indigo-700 border border-indigo-200">
+                          Acuerdo Cuota {a.cuotaActual}/{a.totalCuotas}
+                        </span>
+                        <h4 className="font-display mt-1 text-xs font-bold text-slate-900">
+                          Convenio N.° {a.numeroAcuerdo}
+                        </h4>
+                        <p className="text-[11px] text-slate-500">
+                          {a.organismoTransito} · Vence: {a.fechaVencimiento}
+                        </p>
+                      </div>
+
+                      <div className="text-right shrink-0">
+                        <p className="text-[10px] text-slate-400 font-semibold uppercase">Valor Cuota</p>
+                        <p className="text-sm font-extrabold text-indigo-900">{formatCurrency(a.valorCuota)}</p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 pt-1 border-t border-slate-100">
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={() => handleSaveExtractedAgreement(a)}
+                        className="bg-slate-900 text-white hover:bg-slate-800 text-[11px] font-bold h-7 gap-1"
+                      >
+                        <BookmarkPlus className="size-3" /> Guardar cuota
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() =>
+                          setEmailModalFine({
+                            reference: a.numeroAcuerdo,
+                            kind: "acuerdo_pago",
+                            reason: `Cuota ${a.cuotaActual} de ${a.totalCuotas} - Acuerdo de pago`,
+                            amount: a.valorCuota,
+                            subject: normalizeLookup(lookupValue),
+                            dueDate: a.fechaVencimiento,
+                          })
+                        }
+                        className="text-xs gap-1.5 text-amber-900 border-amber-300 bg-amber-50/50 hover:bg-amber-100/60"
+                      >
+                        <Mail className="size-3.5 text-amber-700" /> Alarma por correo
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </section>
+
+      {/* 2. SECCIÓN: HISTORIAL DE OBLIGACIONES GUARDADAS (DESPLEGABLE CON TOTALES Y CANTIDADES, ABAJO DE LA BÚSQUEDA) */}
       <section className="app-card space-y-3.5">
         <button
           type="button"
           onClick={() => setIsSavedFinesExpanded((prev) => !prev)}
-          className="w-full flex items-center justify-between text-left gap-3 group"
+          className="w-full flex items-center justify-between text-left gap-3 group cursor-pointer"
           aria-expanded={isSavedFinesExpanded}
         >
           <div className="flex items-center gap-2.5 min-w-0">
@@ -961,431 +1377,6 @@ export function FinesTracker({ onBack }: { onBack: () => void }) {
                   />
                 ))}
               </ul>
-            )}
-          </div>
-        )}
-      </section>
-
-      {/* 2. SECCIÓN: CONSULTA DIRECTA OFICIAL AL SIMIT */}
-      <section className="app-card space-y-3.5">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <div className="grid size-8 place-items-center rounded-xl bg-amber-50 text-amber-700">
-              <Car className="size-4" />
-            </div>
-            <div>
-              <h2 className="font-display text-sm font-bold text-slate-900">
-                Consulta Oficial SIMIT
-              </h2>
-              <p className="text-[11px] text-slate-500">
-                Base de datos nacional de la Federación Colombiana de Municipios
-              </p>
-            </div>
-          </div>
-          <span className="pill-badge bg-emerald-50 text-emerald-800 border border-emerald-200">
-            Conexión Oficial
-          </span>
-        </div>
-
-        {/* Selector segmentado moderno tipo iOS */}
-        <div className="grid grid-cols-2 rounded-xl bg-slate-100 p-1 text-xs font-semibold">
-          <button
-            type="button"
-            onClick={() => {
-              setLookupKind("placa");
-              setLookupError("");
-              setSimitQueryResult(null);
-              if (user.plate) setLookupValue(user.plate);
-            }}
-            className={`flex items-center justify-center gap-1.5 rounded-lg py-1.5 transition-all ${
-              lookupKind === "placa"
-                ? "bg-white text-slate-900 shadow-2xs font-bold"
-                : "text-slate-500 hover:text-slate-900"
-            }`}
-          >
-            <Car className="size-3.5" />
-            <span>Por Placa de Vehículo</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setLookupKind("documento");
-              setLookupError("");
-              setSimitQueryResult(null);
-              if (user.documentNumber) setLookupValue(user.documentNumber);
-            }}
-            className={`flex items-center justify-center gap-1.5 rounded-lg py-1.5 transition-all ${
-              lookupKind === "documento"
-                ? "bg-white text-slate-900 shadow-2xs font-bold"
-                : "text-slate-500 hover:text-slate-900"
-            }`}
-          >
-            <ShieldCheck className="size-3.5" />
-            <span>Por Cédula / Documento</span>
-          </button>
-        </div>
-
-        <div className="flex gap-2">
-          <Input
-            value={lookupValue}
-            onChange={(event) => {
-              setLookupValue(event.target.value);
-              setLookupError("");
-            }}
-            placeholder={lookupKind === "placa" ? "Ej. ABC123" : "Ej. 1065631508"}
-            inputMode={lookupKind === "placa" ? "text" : "numeric"}
-            maxLength={16}
-            className="uppercase font-mono text-sm font-bold tracking-wider flex-1 h-10"
-          />
-          <Button
-            type="button"
-            disabled={isQueryingSimit}
-            onClick={handleQuerySimit}
-            className="shrink-0 bg-slate-900 text-white hover:bg-slate-800 px-5 text-xs font-bold h-10 shadow-xs"
-          >
-            {isQueryingSimit ? (
-              <>
-                <LoaderCircle className="size-3.5 animate-spin" />
-                <span>Consultando...</span>
-              </>
-            ) : (
-              <>
-                <Search className="size-3.5" />
-                <span>Consultar</span>
-              </>
-            )}
-          </Button>
-        </div>
-
-        {lookupError && (
-          <p role="alert" className="flex items-center gap-1.5 text-xs font-semibold text-rose-700 bg-rose-50 p-2.5 rounded-xl border border-rose-200">
-            <AlertCircle className="size-4 shrink-0" /> {lookupError}
-          </p>
-        )}
-
-        {simitQueryError && (
-          <p role="alert" className="flex items-center gap-1.5 text-xs font-semibold text-rose-700 bg-rose-50 p-2.5 rounded-xl border border-rose-200">
-            <AlertCircle className="size-4 shrink-0" /> {simitQueryError}
-          </p>
-        )}
-
-        {savedSuccessMsg && (
-          <p role="status" className="flex items-center gap-1.5 rounded-xl bg-emerald-50 border border-emerald-200 p-2.5 text-xs font-bold text-emerald-800">
-            <CheckCircle2 className="size-4 shrink-0 text-emerald-600" /> {savedSuccessMsg}
-          </p>
-        )}
-
-        {isQueryingSimit && (
-          <div className="flex items-center gap-3 rounded-2xl bg-slate-50 border border-slate-200 p-3.5 text-xs text-slate-700">
-            <LoaderCircle className="size-4.5 animate-spin text-slate-900 shrink-0" />
-            <div>
-              <p className="font-bold text-slate-900">Extrayendo estado de cuenta oficial...</p>
-              <p className="text-[11px] text-slate-500">Conectando con el SIMIT nacional sin captchas ni intermediarios.</p>
-            </div>
-          </div>
-        )}
-
-        {/* 2. RESULTADOS OFICIALES EXTRAÍDOS EN TIEMPO REAL */}
-        {simitQueryResult && (
-          <div className="mt-4 space-y-3.5 border-t border-slate-100 pt-4">
-            {simitQueryResult.pazSalvo ? (
-              <div className="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-4">
-                <div className="flex items-center gap-3">
-                  <div className="grid size-10 shrink-0 place-items-center rounded-xl bg-emerald-600 text-white shadow-xs">
-                    <ShieldCheck className="size-5" />
-                  </div>
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <h3 className="font-display text-sm font-bold text-emerald-950">
-                        ¡A Paz y Salvo en SIMIT!
-                      </h3>
-                      <span className="pill-badge bg-emerald-200 text-emerald-900">
-                        Sin deudas
-                      </span>
-                    </div>
-                    <p className="text-xs text-emerald-800 mt-0.5">
-                      {simitQueryResult.criterio.tipo === "placa" ? "Vehículo" : "Documento"}{" "}
-                      <strong className="font-mono uppercase">{simitQueryResult.criterio.valor}</strong> no registra comparendos pendientes.
-                    </p>
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-3.5">
-                {/* 3 TARJETAS KPI DE RESUMEN (Menos texto, métricas claras) */}
-                <div className="grid grid-cols-3 gap-2">
-                  <div className="rounded-2xl border border-rose-100 bg-rose-50/50 p-3 text-left">
-                    <p className="text-[10px] font-semibold text-rose-700 uppercase tracking-tight">Total a Pagar</p>
-                    <p className="font-display mt-0.5 text-sm font-bold text-rose-950 sm:text-base">
-                      {formatCurrency(simitQueryResult.resumen.totalGeneral)}
-                    </p>
-                  </div>
-
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-3 text-left">
-                    <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-tight">Obligaciones</p>
-                    <p className="font-display mt-0.5 text-sm font-bold text-slate-900 sm:text-base">
-                      {simitQueryResult.multas.length + simitQueryResult.acuerdos.length} activas
-                    </p>
-                  </div>
-
-                  <div className="rounded-2xl border border-emerald-100 bg-emerald-50/50 p-3 text-left">
-                    <p className="text-[10px] font-semibold text-emerald-700 uppercase tracking-tight">Titular</p>
-                    <p className="font-display mt-0.5 text-xs font-bold text-emerald-950 truncate">
-                      {simitQueryResult.infractor?.nombreCompleto || simitQueryResult.criterio.valor}
-                    </p>
-                  </div>
-                </div>
-
-                {/* Barra de Acciones Globales */}
-                {simitQueryResult.multas.length > 0 && (
-                  <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl bg-slate-50 p-2.5 border border-slate-200">
-                    <button
-                      type="button"
-                      onClick={handleToggleSelectAllFines}
-                      className="flex items-center gap-1.5 text-xs font-bold text-slate-700 hover:text-slate-900 px-1"
-                    >
-                      {selectedFineIds.length === simitQueryResult.multas.length ? (
-                        <CheckSquare className="size-4 text-slate-900" />
-                      ) : (
-                        <Square className="size-4 text-slate-400" />
-                      )}
-                      <span>
-                        {selectedFineIds.length === simitQueryResult.multas.length
-                          ? "Deseleccionar"
-                          : `Todas (${simitQueryResult.multas.length})`}
-                      </span>
-                    </button>
-
-                    <div className="flex items-center gap-1.5 ml-auto">
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        onClick={() => handleOpenPaymentModal(undefined, "liquidacion_pdf")}
-                        disabled={selectedFineIds.length === 0}
-                        className="text-xs h-8 gap-1 border-slate-300 text-slate-700 hover:bg-white"
-                      >
-                        <FileText className="size-3 text-slate-600" />
-                        <span>Cupón Banco</span>
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        onClick={() => handleOpenPaymentModal(undefined, "pse")}
-                        disabled={selectedFineIds.length === 0}
-                        className="bg-emerald-700 text-white hover:bg-emerald-800 text-xs font-bold h-8 gap-1 shadow-xs"
-                      >
-                        <CreditCard className="size-3" />
-                        <span>
-                          Pagar Selección (
-                          {formatCurrency(
-                            simitQueryResult.multas
-                              .filter((m) => selectedFineIds.includes(m.id))
-                              .reduce((sum, item) => sum + item.valorPagar, 0),
-                          )}
-                          )
-                        </span>
-                      </Button>
-                    </div>
-                  </div>
-                )}
-
-                {/* Lista de comparendos extraídos (Minimalista con Acordeón) */}
-                {simitQueryResult.multas.map((m) => {
-                  const isSelected = selectedFineIds.includes(m.id);
-                  const isExpanded = expandedFineIds.includes(m.id);
-
-                  return (
-                    <div
-                      key={m.id}
-                      className={`rounded-2xl border transition-all p-3.5 shadow-2xs space-y-2.5 ${
-                        isSelected ? "border-slate-400 bg-slate-50/40" : "border-slate-200/90 bg-white"
-                      }`}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="flex items-start gap-2.5 min-w-0">
-                          <button
-                            type="button"
-                            onClick={() => handleToggleFineSelection(m.id)}
-                            className="mt-0.5 shrink-0 text-slate-900 hover:opacity-80"
-                            aria-label="Seleccionar para pagar"
-                          >
-                            {isSelected ? (
-                              <CheckSquare className="size-4.5 text-slate-900" />
-                            ) : (
-                              <Square className="size-4.5 text-slate-300" />
-                            )}
-                          </button>
-
-                          <div className="min-w-0">
-                            <div className="flex flex-wrap items-center gap-1.5">
-                              <span
-                                className={`pill-badge ${
-                                  m.tipo === "resolucion"
-                                    ? "bg-purple-50 text-purple-800 border border-purple-200"
-                                    : m.tipo === "fotodeteccion"
-                                      ? "bg-blue-50 text-blue-800 border border-blue-200"
-                                      : "bg-amber-50 text-amber-800 border border-amber-200"
-                                }`}
-                              >
-                                {m.tipo === "resolucion"
-                                  ? "Resolución"
-                                  : m.tipo === "fotodeteccion"
-                                    ? "Fotomulta"
-                                    : "Comparendo"}
-                              </span>
-                              {m.placa && (
-                                <span className="rounded-md bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] font-bold text-slate-800 border border-slate-200">
-                                  {m.placa}
-                                </span>
-                              )}
-                              <span className="text-[11px] font-mono font-bold text-slate-600">
-                                {m.numeroResolucion ? `Res. ${m.numeroResolucion}` : `N.° ${m.numeroComparendo}`}
-                              </span>
-                            </div>
-
-                            <h4 className="font-display mt-1 text-xs font-bold text-slate-900">
-                              {m.codigoInfraccion} · {m.descripcionInfraccion}
-                            </h4>
-
-                            <div className="flex flex-wrap items-center gap-1.5 mt-1">
-                              <span className="inline-flex items-center gap-1 font-semibold text-slate-800 bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200 text-[11px]">
-                                <Calendar className="size-3 text-slate-500" />
-                                <span>Fecha del comparendo: <strong>{m.fecha}</strong></span>
-                              </span>
-                              <span className="text-[11px] text-slate-500">· {m.organismoTransito} {m.departamento ? `(${m.departamento})` : ""}</span>
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="text-right shrink-0">
-                          <p className="text-[10px] text-slate-400 font-semibold uppercase">Total</p>
-                          <p className="text-sm font-extrabold text-slate-900">{formatCurrency(m.valorPagar)}</p>
-                        </div>
-                      </div>
-
-                      {/* Acordeón Plegable de Descuentos / Detalles */}
-                      {isExpanded && (
-                        <div className="rounded-xl bg-slate-50 p-2.5 text-xs space-y-1.5 border border-slate-200/80">
-                          {m.descuento50 && m.fechaLimite50 && (
-                            <div className="flex justify-between text-slate-700 text-[11px]">
-                              <span>50% Descuento (5 días hábiles):</span>
-                              <span className="font-bold text-emerald-800">
-                                {formatCurrency(m.descuento50)} (Hasta {m.fechaLimite50})
-                              </span>
-                            </div>
-                          )}
-                          {m.descuento25 && m.fechaLimite25 && (
-                            <div className="flex justify-between text-slate-600 text-[11px]">
-                              <span>25% Descuento (20 días hábiles):</span>
-                              <span className="font-semibold text-slate-800">
-                                {formatCurrency(m.descuento25)} (Hasta {m.fechaLimite25})
-                              </span>
-                            </div>
-                          )}
-                          {m.numeroResolucion && (
-                            <p className="text-[10px] text-slate-500 pt-1 border-t border-slate-200">
-                              Resolución Sancionatoria N.° {m.numeroResolucion} (Comparendo original: {m.numeroComparendo})
-                            </p>
-                          )}
-                        </div>
-                      )}
-
-                      {/* Barra de Acciones de la Tarjeta */}
-                      <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-slate-100">
-                        <Button
-                          type="button"
-                          size="sm"
-                          onClick={() => handleOpenPaymentModal([m], "pse")}
-                          className="bg-emerald-700 text-white hover:bg-emerald-800 text-[11px] font-bold h-7 gap-1"
-                        >
-                          <CreditCard className="size-3" /> Pagar PSE / Tarjeta
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          onClick={() => handleOpenPaymentModal([m], "liquidacion_pdf")}
-                          className="text-[11px] h-7 gap-1 border-slate-200 text-slate-700 hover:bg-slate-50"
-                        >
-                          <FileText className="size-3 text-slate-600" /> Cupón
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => handleSaveExtractedFine(m)}
-                          className="text-[11px] h-7 gap-1 text-slate-600 hover:text-slate-900"
-                        >
-                          <BookmarkPlus className="size-3" /> Guardar
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => toggleExpandFine(m.id)}
-                          className="text-[11px] h-7 text-slate-500 hover:text-slate-900 ml-auto"
-                        >
-                          {isExpanded ? "Menos info ▴" : "Ver plazos ▾"}
-                        </Button>
-                      </div>
-                    </div>
-                  );
-                })}
-
-                {/* Lista de acuerdos extraídos */}
-                {simitQueryResult.acuerdos.map((a) => (
-                  <div key={a.id} className="rounded-2xl border border-slate-200 bg-white p-3.5 shadow-2xs space-y-2">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <span className="pill-badge bg-indigo-50 text-indigo-700 border border-indigo-200">
-                          Acuerdo Cuota {a.cuotaActual}/{a.totalCuotas}
-                        </span>
-                        <h4 className="font-display mt-1 text-xs font-bold text-slate-900">
-                          Convenio N.° {a.numeroAcuerdo}
-                        </h4>
-                        <p className="text-[11px] text-slate-500">
-                          {a.organismoTransito} · Vence: {a.fechaVencimiento}
-                        </p>
-                      </div>
-
-                      <div className="text-right shrink-0">
-                        <p className="text-[10px] text-slate-400 font-semibold uppercase">Valor Cuota</p>
-                        <p className="text-sm font-extrabold text-indigo-900">{formatCurrency(a.valorCuota)}</p>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-2 pt-1 border-t border-slate-100">
-                      <Button
-                        type="button"
-                        size="sm"
-                        onClick={() => handleSaveExtractedAgreement(a)}
-                        className="bg-slate-900 text-white hover:bg-slate-800 text-[11px] font-bold h-7 gap-1"
-                      >
-                        <BookmarkPlus className="size-3" /> Guardar cuota
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        onClick={() =>
-                          setEmailModalFine({
-                            reference: a.numeroAcuerdo,
-                            kind: "acuerdo_pago",
-                            reason: `Cuota ${a.cuotaActual} de ${a.totalCuotas} - Acuerdo de pago`,
-                            amount: a.valorCuota,
-                            subject: normalizeLookup(lookupValue),
-                            dueDate: a.fechaVencimiento,
-                          })
-                        }
-                        className="text-xs gap-1.5 text-amber-900 border-amber-300 bg-amber-50/50 hover:bg-amber-100/60"
-                      >
-                        <Mail className="size-3.5 text-amber-700" /> Alarma por correo
-                      </Button>
-                    </div>
-                  </div>
-                ))}
-              </div>
             )}
           </div>
         )}
@@ -1913,6 +1904,7 @@ function FineCardItem({
   onRequestEmailAlert: () => void;
   onPayOnline: () => void;
 }) {
+  const [isDetailOpen, setIsDetailOpen] = useState(false);
   const isAgreement = fine.kind === "acuerdo_pago";
 
   if (isAgreement) {
@@ -1920,62 +1912,97 @@ function FineCardItem({
     const status = due ? buildAgreementStatus(due, new Date(), fine.amount) : null;
 
     return (
-      <li className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      <li className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm space-y-3">
         <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
               <span className="rounded-md bg-indigo-50 px-2 py-0.5 text-[10px] font-bold uppercase text-indigo-700">
                 Acuerdo de Pago {fine.installmentNumber && fine.totalInstallments ? `(Cuota ${fine.installmentNumber}/${fine.totalInstallments})` : ""}
               </span>
               {fine.subject && <span className="text-xs font-mono text-slate-500 font-bold">{fine.subject}</span>}
             </div>
-            <h3 className="font-display mt-1 text-[15px] font-semibold text-[#102238]">
-              {fine.reason || `Convenio N.° ${fine.reference}`}
-            </h3>
-            <p className="mt-0.5 text-xs text-slate-500">
-              N.° {fine.reference} {fine.city && `· ${fine.city}`}
-            </p>
+
+            {/* Título recortado en preview + botón interactivo para ver más detalle */}
+            <button
+              type="button"
+              onClick={() => setIsDetailOpen((prev) => !prev)}
+              className="text-left w-full group/title cursor-pointer mt-1 block"
+            >
+              <h3 className={`font-display text-xs font-bold text-slate-900 group-hover/title:text-indigo-900 transition-colors ${isDetailOpen ? "" : "line-clamp-1"}`}>
+                {fine.reason || `Convenio N.° ${fine.reference}`}
+              </h3>
+              <div className="flex items-center gap-1 text-[10px] text-slate-500 font-medium mt-0.5">
+                <span className="text-slate-700 group-hover/title:underline">
+                  {isDetailOpen ? "Ocultar detalle" : "Ver más detalle"}
+                </span>
+                <ChevronDown className={`size-3 text-slate-500 transition-transform duration-200 ${isDetailOpen ? "rotate-180" : ""}`} />
+              </div>
+            </button>
+
+            {/* Fecha del comparendo / acuerdo */}
+            <div className="flex flex-wrap items-center gap-1.5 mt-1.5 text-[11px] text-slate-500">
+              <span className="inline-flex items-center gap-1 font-semibold text-indigo-950 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-200">
+                <Calendar className="size-3 text-indigo-600" />
+                Fecha vencimiento: <strong>{due ? formatLongDate(due) : (fine.dueDate || "N/D")}</strong>
+              </span>
+              <span className="font-mono font-semibold text-slate-700">N.º {fine.reference}</span>
+              {fine.city && <span>· {fine.city}</span>}
+            </div>
           </div>
 
-          {fine.paid ? (
-            <span className="shrink-0 rounded-full bg-emerald-50 px-2.5 py-0.5 text-[10px] font-semibold uppercase text-emerald-700">
-              Pagada
-            </span>
-          ) : status ? (
-            <span
-              className={`shrink-0 rounded-full px-2.5 py-0.5 text-[10px] font-semibold uppercase ${
-                status.status === "vencido"
-                  ? "bg-slate-100 text-slate-600"
-                  : status.daysLeft <= ALERT_WINDOW_DAYS
-                    ? "bg-rose-50 text-rose-700 font-bold"
-                    : "bg-amber-50 text-amber-700"
-              }`}
-            >
-              {status.status === "vencido"
-                ? "Cuota vencida"
-                : status.daysLeft === 0
-                  ? "Vence HOY"
-                  : `${status.daysLeft} días restantes`}
-            </span>
-          ) : null}
+          {/* Monto de la Multa / Cuota y Estado */}
+          <div className="text-right shrink-0">
+            <p className="text-[10px] text-slate-400 font-semibold uppercase">Cuota</p>
+            <p className="text-sm font-extrabold text-indigo-900">
+              {formatCurrency(fine.amount || 0)}
+            </p>
+            <div className="mt-1">
+              {fine.paid ? (
+                <span className="inline-block rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold uppercase text-emerald-700">
+                  Pagada
+                </span>
+              ) : status ? (
+                <span
+                  className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase ${
+                    status.status === "vencido"
+                      ? "bg-slate-100 text-slate-600"
+                      : status.daysLeft <= ALERT_WINDOW_DAYS
+                        ? "bg-rose-50 text-rose-700 font-bold"
+                        : "bg-amber-50 text-amber-700"
+                  }`}
+                >
+                  {status.status === "vencido"
+                    ? "Cuota vencida"
+                    : status.daysLeft === 0
+                      ? "Vence HOY"
+                      : `${status.daysLeft}d restantes`}
+                </span>
+              ) : null}
+            </div>
+          </div>
         </div>
 
-        {!fine.paid && due && (
-          <div className="mt-3 rounded-xl bg-slate-50 p-3 text-xs leading-5">
-            <div className="flex justify-between font-medium text-slate-700">
-              <span>Fecha límite de pago:</span>
-              <span>{formatLongDate(due)}</span>
-            </div>
-            {fine.amount && (
-              <div className="flex justify-between pt-1 font-bold text-[#102238]">
-                <span>Valor de la cuota:</span>
-                <span>{formatCurrency(fine.amount)}</span>
+        {/* Detalle Expandido */}
+        {isDetailOpen && (
+          <div className="rounded-xl bg-slate-50 p-3 text-xs leading-5 space-y-1.5 border border-slate-200/80">
+            <p className="text-slate-700 font-medium">
+              Descripción completa: <strong>{fine.reason || `Acuerdo de pago N.° ${fine.reference}`}</strong>
+            </p>
+            {due && (
+              <div className="flex justify-between text-slate-600">
+                <span>Fecha límite exigible:</span>
+                <span className="font-semibold text-slate-800">{formatLongDate(due)}</span>
               </div>
+            )}
+            {fine.city && (
+              <p className="text-slate-500 text-[11px]">
+                Organismo de Tránsito: {fine.city}
+              </p>
             )}
           </div>
         )}
 
-        <div className="mt-3 flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-slate-100">
           {!fine.paid && (
             <>
               <Button
@@ -1995,7 +2022,7 @@ function FineCardItem({
           <Button type="button" size="sm" variant="ghost" onClick={onTogglePaid} className="text-xs">
             {fine.paid ? "Marcar como pendiente" : "Marcar como pagada"}
           </Button>
-          <Button type="button" size="sm" variant="ghost" onClick={onDelete} className="text-xs text-slate-400 hover:text-rose-700">
+          <Button type="button" size="sm" variant="ghost" onClick={onDelete} className="text-xs text-slate-400 hover:text-rose-700 ml-auto">
             <Trash2 className="size-3.5" />
           </Button>
         </div>
@@ -2009,63 +2036,100 @@ function FineCardItem({
   const best = bestAvailableDiscount(deadlines);
 
   return (
-    <li className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+    <li className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm space-y-3">
       <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span className="rounded-md bg-amber-50 px-2 py-0.5 text-[10px] font-bold uppercase text-amber-800">
               Comparendo
             </span>
             {fine.subject && <span className="text-xs font-mono font-bold text-slate-600">{fine.subject}</span>}
           </div>
-          <h3 className="font-display mt-1 text-xs font-bold text-slate-900">
-            {fine.reason || "Comparendo de tránsito"}
-          </h3>
-          <div className="flex flex-wrap items-center gap-1.5 mt-1 text-[11px] text-slate-500">
+
+          {/* Título recortado en preview + botón interactivo para ver más detalle */}
+          <button
+            type="button"
+            onClick={() => setIsDetailOpen((prev) => !prev)}
+            className="text-left w-full group/title cursor-pointer mt-1 block"
+          >
+            <h3 className={`font-display text-xs font-bold text-slate-900 group-hover/title:text-blue-900 transition-colors ${isDetailOpen ? "" : "line-clamp-1"}`}>
+              {fine.reason || "Comparendo de tránsito"}
+            </h3>
+            <div className="flex items-center gap-1 text-[10px] text-slate-500 font-medium mt-0.5">
+              <span className="text-slate-700 group-hover/title:underline">
+                {isDetailOpen ? "Ocultar detalle" : "Ver más detalle"}
+              </span>
+              <ChevronDown className={`size-3 text-slate-500 transition-transform duration-200 ${isDetailOpen ? "rotate-180" : ""}`} />
+            </div>
+          </button>
+
+          {/* Fecha del comparendo */}
+          <div className="flex flex-wrap items-center gap-1.5 mt-1.5 text-[11px] text-slate-500">
+            <span className="inline-flex items-center gap-1 font-semibold text-slate-800 bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200">
+              <Calendar className="size-3 text-slate-500" />
+              Fecha comparendo: <strong>{imposed ? formatLongDate(imposed) : (fine.impositionDate || "N/D")}</strong>
+            </span>
             <span className="font-mono font-semibold text-slate-700">N.º {fine.reference}</span>
             {fine.city && <span>· {fine.city}</span>}
-            {imposed && (
-              <span className="inline-flex items-center gap-1 font-semibold text-slate-800 bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200">
-                <Calendar className="size-3 text-slate-500" />
-                Fecha comparendo: <strong>{formatLongDate(imposed)}</strong>
+          </div>
+        </div>
+
+        {/* Monto de la Multa y Estado */}
+        <div className="text-right shrink-0">
+          <p className="text-[10px] text-slate-400 font-semibold uppercase">Monto</p>
+          <p className="text-sm font-extrabold text-slate-900">
+            {formatCurrency(fine.amount || 0)}
+          </p>
+          <div className="mt-1">
+            {fine.paid ? (
+              <span className="inline-block rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold uppercase text-emerald-700">
+                Pagado
+              </span>
+            ) : best ? (
+              <span
+                className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase ${
+                  best.daysLeft <= ALERT_WINDOW_DAYS ? "bg-rose-50 text-rose-700 font-bold" : "bg-amber-50 text-amber-700"
+                }`}
+              >
+                {best.daysLeft === 0 ? "Vence hoy" : `${best.daysLeft}d desc.`}
+              </span>
+            ) : (
+              <span className="inline-block rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase text-slate-600">
+                Sin descuento
               </span>
             )}
           </div>
         </div>
-
-        {fine.paid ? (
-          <span className="shrink-0 rounded-full bg-emerald-50 px-2.5 py-0.5 text-[10px] font-semibold uppercase text-emerald-700">
-            Pagado
-          </span>
-        ) : best ? (
-          <span
-            className={`shrink-0 rounded-full px-2.5 py-0.5 text-[10px] font-semibold uppercase ${
-              best.daysLeft <= ALERT_WINDOW_DAYS ? "bg-rose-50 text-rose-700 font-bold" : "bg-amber-50 text-amber-700"
-            }`}
-          >
-            {best.daysLeft === 0 ? "Vence hoy" : `${best.daysLeft} días descuento`}
-          </span>
-        ) : (
-          <span className="shrink-0 rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold uppercase text-slate-600">
-            Sin descuento
-          </span>
-        )}
       </div>
 
-      {!fine.paid && (
-        <div className="mt-3 space-y-1.5">
-          {deadlines.map((deadline) => (
-            <DiscountRow key={deadline.id} deadline={deadline} />
-          ))}
-          {!best && (
-            <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-600">
-              Los términos de descuento del 50% y 25% ya expiraron. Puedes realizar el pago del valor liquidado directamente con las pasarelas integradas.
+      {/* Detalle Expandido (Plazos de descuento, información oficial) */}
+      {isDetailOpen && (
+        <div className="space-y-2 rounded-xl bg-slate-50 p-3 text-xs border border-slate-200/80">
+          <p className="text-slate-700 font-medium leading-relaxed">
+            Infracción registrada: <strong>{fine.reason || "Comparendo de tránsito oficial"}</strong>
+          </p>
+          {fine.city && (
+            <p className="text-[11px] text-slate-500">
+              Organismo de tránsito competente: <strong>{fine.city}</strong>
             </p>
+          )}
+
+          {!fine.paid && (
+            <div className="space-y-1.5 pt-1 border-t border-slate-200/80">
+              {deadlines.map((deadline) => (
+                <DiscountRow key={deadline.id} deadline={deadline} />
+              ))}
+              {!best && (
+                <p className="rounded-lg bg-slate-100 px-2.5 py-1.5 text-[11px] leading-5 text-slate-600">
+                  Los términos de descuento del 50% y 25% ya expiraron. Puedes pagar la totalidad liquidada en línea con PSE o Tarjeta.
+                </p>
+              )}
+            </div>
           )}
         </div>
       )}
 
-      <div className="mt-3 flex flex-wrap items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-slate-100">
         {!fine.paid && (
           <>
             <Button
@@ -2085,7 +2149,7 @@ function FineCardItem({
         <Button type="button" size="sm" variant="ghost" onClick={onTogglePaid} className="text-xs">
           {fine.paid ? "Marcar como pendiente" : "Marcar como pagado"}
         </Button>
-        <Button type="button" size="sm" variant="ghost" onClick={onDelete} className="text-xs text-slate-400 hover:text-rose-700">
+        <Button type="button" size="sm" variant="ghost" onClick={onDelete} className="text-xs text-slate-400 hover:text-rose-700 ml-auto">
           <Trash2 className="size-3.5" />
         </Button>
       </div>
